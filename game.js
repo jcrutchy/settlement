@@ -10,6 +10,8 @@ let state = {
     logs: ["A clearing in the wilderness. Gather wood to build shelter."]
 };
 
+let hasPulledThisSession = false;
+
 const STORAGE_KEY = "settlement_save_v1";
 const CREDS_KEY = "settlement_gist_creds";
 const GIST_FILENAME = "settlement_save.json";
@@ -24,7 +26,9 @@ async function init() {
     loadLocalSave();
     loadCredsUI();
     bindEvents();
+    updateSyncUIState();
     calculateOfflineProgress();
+
     checkUnlocks();
     renderAll();
 
@@ -49,7 +53,6 @@ function initDefaultState() {
 
 // --- STATE SANITIZATION (SCHEMA MIGRATION) ---
 function sanitizeState() {
-    // Ensure all resources defined in gamedata.json exist in state
     gameData.resources.forEach(r => {
         if (state.resources[r.id] === undefined) {
             state.resources[r.id] = r.initial || 0;
@@ -57,7 +60,6 @@ function sanitizeState() {
         }
     });
 
-    // Ensure all jobs exist
     gameData.jobs.forEach(j => {
         if (state.jobs[j.id] === undefined) {
             state.jobs[j.id] = 0;
@@ -65,7 +67,6 @@ function sanitizeState() {
         }
     });
 
-    // Ensure all buildings exist
     gameData.buildings.forEach(b => {
         if (state.buildings[b.id] === undefined) {
             state.buildings[b.id] = 0;
@@ -82,7 +83,6 @@ function tick(deltaSeconds = 1) {
     // 1. Housing & Population Growth
     const maxPop = getMaxHousing();
     if (state.population < maxPop && state.resources.food >= 5) {
-        // 15% chance per second to attract a settler if fed and housed
         if (Math.random() < 0.15 * deltaSeconds) {
             state.population++;
             addLog("A new settler arrived at your camp.");
@@ -120,7 +120,6 @@ function tick(deltaSeconds = 1) {
 function calculateOfflineProgress() {
     const elapsedSec = Math.floor((Date.now() - state.lastTick) / 1000);
     if (elapsedSec > 5) {
-        // Cap offline simulation at 8 hours (28800s) for balance
         const simSec = Math.min(elapsedSec, 28800);
         tick(simSec);
         addLog(`Welcome back. Simulated ${simSec}s of offline progress.`);
@@ -187,7 +186,7 @@ function buildStructure(bId) {
 
 // --- HELPERS ---
 function getMaxHousing() {
-    return (state.buildings.hut || 0) * 2;
+    return (state.buildings.hut || 0) * 2 + (state.buildings.cabin || 0) * 5;
 }
 
 function getIdlePop() {
@@ -226,7 +225,6 @@ function addLog(msg) {
 function renderAll() {
     renderLogs();
 
-    // Resources & Manual Buttons
     const resContainer = document.getElementById("resources-list");
     const btnContainer = document.getElementById("manual-actions");
     resContainer.innerHTML = "";
@@ -245,7 +243,6 @@ function renderAll() {
         btnContainer.appendChild(btn);
     });
 
-    // Jobs
     const jobsContainer = document.getElementById("jobs-list");
     jobsContainer.innerHTML = "";
     gameData.jobs.forEach(j => {
@@ -265,7 +262,6 @@ function renderAll() {
         jobsContainer.appendChild(row);
     });
 
-    // Buildings
     const bldContainer = document.getElementById("buildings-list");
     bldContainer.innerHTML = "";
     gameData.buildings.forEach(b => {
@@ -336,18 +332,48 @@ function loadCredsUI() {
     if (creds.gistId) document.getElementById("gist-id").value = creds.gistId;
 }
 
+function saveCredsAuto() {
+    const token = document.getElementById("gist-token").value.trim();
+    const gistId = document.getElementById("gist-id").value.trim();
+    localStorage.setItem(CREDS_KEY, JSON.stringify({ token, gistId }));
+    updateSyncUIState();
+}
+
+function updateSyncUIState() {
+    const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
+    const hasCreds = !!(creds.token && creds.gistId);
+
+    const pullBtn = document.getElementById("pull-gist-btn");
+    const pushBtn = document.getElementById("push-gist-btn");
+
+    if (hasCreds) {
+        pullBtn.style.display = "inline-block";
+        pushBtn.style.display = "inline-block";
+        // Disable push until user has pulled this session
+        pushBtn.disabled = !hasPulledThisSession;
+        if (!hasPulledThisSession) {
+            pushBtn.title = "Please Pull from cloud first before pushing.";
+        } else {
+            pushBtn.title = "";
+        }
+    } else {
+        pullBtn.style.display = "none";
+        pushBtn.style.display = "none";
+    }
+}
+
 function setSyncStatus(msg, isError = false) {
     const el = document.getElementById("sync-status");
     el.style.color = isError ? "var(--danger)" : "var(--accent)";
     el.textContent = msg;
 }
 
-async function pushToGist() {
+async function pushToGist(isAuto = false) {
     const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
-    if (!creds.token || !creds.gistId) return setSyncStatus("Enter Token & Gist ID first.", true);
+    if (!creds.token || !creds.gistId) return;
 
     saveLocal();
-    setSyncStatus("Pushing save to Secret Gist...");
+    if (!isAuto) setSyncStatus("Pushing save to Secret Gist...");
     try {
         const res = await fetch(`https://api.github.com/gists/${creds.gistId}`, {
             method: "PATCH",
@@ -361,9 +387,9 @@ async function pushToGist() {
             })
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setSyncStatus(`Synced to Gist at ${new Date().toLocaleTimeString()}.`);
+        if (!isAuto) setSyncStatus(`Synced to Gist at ${new Date().toLocaleTimeString()}.`);
     } catch (err) {
-        setSyncStatus(`Push failed: ${err.message}`, true);
+        if (!isAuto) setSyncStatus(`Push failed: ${err.message}`, true);
     }
 }
 
@@ -384,12 +410,27 @@ async function pullFromGist() {
         const fileContent = data.files[GIST_FILENAME]?.content;
         if (!fileContent) throw new Error(`File ${GIST_FILENAME} not found in Gist.`);
 
-        state = JSON.parse(fileContent);
+        const cloudState = JSON.parse(fileContent);
+
+        // Optional clock check safety against clock skew (< 5s difference)
+        if (cloudState.lastTick && state.lastTick && cloudState.lastTick < state.lastTick - 5000) {
+            const localTime = new Date(state.lastTick).toLocaleTimeString();
+            const cloudTime = new Date(cloudState.lastTick).toLocaleTimeString();
+            if (!confirm(`Warning: Your local save is newer (${localTime}) than the cloud save (${cloudTime}). Overwrite local with cloud?`)) {
+                setSyncStatus("Pull canceled.");
+                return;
+            }
+        }
+
+        state = cloudState;
         sanitizeState();
         saveLocal();
         calculateOfflineProgress();
         renderAll();
-        setSyncStatus(`Loaded cloud save from ${new Date(state.lastTick).toLocaleString()}.`);
+
+        hasPulledThisSession = true;
+        updateSyncUIState();
+        setSyncStatus(`Loaded cloud save from ${new Date(state.lastTick).toLocaleTimeString()}. Push unlocked.`);
     } catch (err) {
         setSyncStatus(`Pull failed: ${err.message}`, true);
     }
@@ -399,14 +440,14 @@ function bindEvents() {
     document.getElementById("toggle-sync-btn").onclick = () => {
         document.getElementById("sync-panel").classList.toggle("hidden");
     };
-    document.getElementById("save-creds-btn").onclick = () => {
-        const token = document.getElementById("gist-token").value.trim();
-        const gistId = document.getElementById("gist-id").value.trim();
-        localStorage.setItem(CREDS_KEY, JSON.stringify({ token, gistId }));
-        setSyncStatus("Credentials saved to this browser's localStorage.");
-    };
-    document.getElementById("push-gist-btn").onclick = pushToGist;
+
+    // Auto-save credentials on input/paste
+    document.getElementById("gist-token").oninput = saveCredsAuto;
+    document.getElementById("gist-id").oninput = saveCredsAuto;
+
+    document.getElementById("push-gist-btn").onclick = () => pushToGist(false);
     document.getElementById("pull-gist-btn").onclick = pullFromGist;
+
     document.getElementById("local-save-btn").onclick = () => {
         saveLocal();
         addLog("Game saved locally.");
@@ -417,6 +458,31 @@ function bindEvents() {
             location.reload();
         }
     };
+
+    // Auto-push on window close/unload if pulled this session
+    window.addEventListener("beforeunload", () => {
+        saveLocal();
+        if (hasPulledThisSession) {
+            const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
+            if (creds.token && creds.gistId) {
+                // Use navigator.sendBeacon or synchronous fetch if possible, 
+                // but standard async fetch during unload can be tricky. 
+                // We'll trigger a background push attempt:
+                fetch(`https://api.github.com/gists/${creds.gistId}`, {
+                    method: "PATCH",
+                    keepalive: true,
+                    headers: {
+                        "Authorization": `Bearer ${creds.token}`,
+                        "Accept": "application/vnd.github+json",
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } }
+                    })
+                }).catch(() => {});
+            }
+        }
+    });
 }
 
 init();
