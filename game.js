@@ -25,6 +25,7 @@ async function init() {
     loadCredsUI();
     bindEvents();
     calculateOfflineProgress();
+    checkUnlocks();
     renderAll();
 
     setInterval(tick, gameData.meta.tickRateMs);
