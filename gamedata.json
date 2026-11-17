@@ -1,0 +1,37 @@
+{
+  "meta": {
+    "title": "SETTLEMENT // v0.1",
+    "tickRateMs": 1000,
+    "autoSaveMs": 30000
+  },
+  "resources": [
+    { "id": "food", "name": "Food", "icon": "🌾", "initial": 10, "unlocked": true },
+    { "id": "wood", "name": "Wood", "icon": "🪵", "initial": 0, "unlocked": true },
+    { "id": "stone", "name": "Stone", "icon": "🪨", "initial": 0, "unlocked": false, "unlockReq": { "resource": "wood", "amount": 15 } }
+  ],
+  "jobs": [
+    { "id": "forager", "name": "Forager", "produces": "food", "rate": 1.2, "consumesFood": 0.5 },
+    { "id": "woodcutter", "name": "Woodcutter", "produces": "wood", "rate": 0.8, "consumesFood": 0.5 },
+    { "id": "miner", "name": "Miner", "produces": "stone", "rate": 0.5, "consumesFood": 0.5, "unlockReq": { "resource": "stone", "amount": 1 } }
+  ],
+  "buildings": [
+    {
+      "id": "hut",
+      "name": "Timber Hut",
+      "desc": "+2 Housing Capacity",
+      "housing": 2,
+      "baseCost": { "wood": 10 },
+      "costMultiplier": 1.35,
+      "unlocked": true
+    },
+    {
+      "id": "granary",
+      "name": "Granary",
+      "desc": "+20% Food output",
+      "foodBonus": 0.2,
+      "baseCost": { "wood": 25, "stone": 10 },
+      "costMultiplier": 1.5,
+      "unlockReq": { "resource": "stone", "amount": 5 }
+    }
+  ]
+}

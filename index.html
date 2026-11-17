@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SETTLEMENT // v0.1</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="title-bar">
+            <h1 id="game-title">SETTLEMENT // v0.1</h1>
+            <button id="toggle-sync-btn" class="btn-subtle">⚙ Cloud Sync</button>
+        </div>
+        <div id="sync-panel" class="panel hidden">
+            <h3>GitHub Secret Gist Sync</h3>
+            <p class="hint">Stored locally in your browser only. Never committed to Git.</p>
+            <div class="form-row">
+                <input type="password" id="gist-token" placeholder="Fine-Grained PAT (Gist Read/Write)">
+                <input type="text" id="gist-id" placeholder="Secret Gist ID">
+            </div>
+            <div class="button-row">
+                <button id="save-creds-btn">Save Credentials</button>
+                <button id="push-gist-btn" class="btn-primary">⬆ Push Save to Gist</button>
+                <button id="pull-gist-btn">⬇ Pull Save from Gist</button>
+            </div>
+            <div id="sync-status" class="status-text"></div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Event Log -->
+        <section id="log-panel" class="panel log-box"></section>
+
+        <!-- Resources & Manual Gathering -->
+        <section class="panel">
+            <h2>Stockpiles</h2>
+            <div id="resources-list" class="grid-list"></div>
+            <div id="manual-actions" class="button-row" style="margin-top: 12px;"></div>
+        </section>
+
+        <!-- Population & Workforce -->
+        <section class="panel" id="pop-section">
+            <div class="section-header">
+                <h2>Population</h2>
+                <span id="pop-counter" class="badge">0 / 0</span>
+            </div>
+            <p class="hint">Idle Villagers: <strong id="idle-pop">0</strong> (Each villager consumes 0.5 Food/s)</p>
+            <div id="jobs-list" class="stack-list"></div>
+        </section>
+
+        <!-- Structures -->
+        <section class="panel">
+            <h2>Structures</h2>
+            <div id="buildings-list" class="stack-list"></div>
+        </section>
+    </main>
+
+    <footer>
+        <button id="local-save-btn" class="btn-subtle">Save Local</button>
+        <button id="hard-reset-btn" class="btn-danger">Reset Run</button>
+    </footer>
+
+    <script src="game.js"></script>
+</body>
+</html>
