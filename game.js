@@ -46,6 +46,33 @@ function initDefaultState() {
     });
 }
 
+// --- STATE SANITIZATION (SCHEMA MIGRATION) ---
+function sanitizeState() {
+    // Ensure all resources defined in gamedata.json exist in state
+    gameData.resources.forEach(r => {
+        if (state.resources[r.id] === undefined) {
+            state.resources[r.id] = r.initial || 0;
+            state.unlocks.resources[r.id] = !!r.unlocked;
+        }
+    });
+
+    // Ensure all jobs exist
+    gameData.jobs.forEach(j => {
+        if (state.jobs[j.id] === undefined) {
+            state.jobs[j.id] = 0;
+            state.unlocks.jobs[j.id] = !j.unlockReq;
+        }
+    });
+
+    // Ensure all buildings exist
+    gameData.buildings.forEach(b => {
+        if (state.buildings[b.id] === undefined) {
+            state.buildings[b.id] = 0;
+            state.unlocks.buildings[b.id] = !!b.unlocked;
+        }
+    });
+}
+
 // --- CORE SIMULATION LOOP ---
 function tick(deltaSeconds = 1) {
     const now = Date.now();
@@ -295,6 +322,7 @@ function loadLocalSave() {
         try {
             const parsed = JSON.parse(raw);
             state = { ...state, ...parsed };
+            sanitizeState();
         } catch (e) {
             console.error("Failed to parse local save", e);
         }
@@ -356,6 +384,7 @@ async function pullFromGist() {
         if (!fileContent) throw new Error(`File ${GIST_FILENAME} not found in Gist.`);
 
         state = JSON.parse(fileContent);
+        sanitizeState();
         saveLocal();
         calculateOfflineProgress();
         renderAll();
