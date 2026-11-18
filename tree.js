@@ -47,7 +47,7 @@ function describe(n) {
     if (n.kind === "building") { p.push("cost " + mapText(x.cost)); (x.effects || []).forEach(e => p.push(`${e.type} ${e.resource || ""} +${e.value}`.replace("  ", " "))); }
     if (n.kind === "job") p.push((x.inputs ? mapText(x.inputs) + " → " : "") + mapText(x.outputs) + " per second");
     if (n.kind === "resource") { p.push("capacity " + x.cap); if (x.manual) p.push("gatherable by hand"); }
-    if (n.kind === "deposit") p.push(`${x.capacity} ${x.resource}, ${x.regrow ? "regrows" : "finite"}`);
+    if (n.kind === "deposit") p.push(`${x.perTile} ${x.resource} per ${x.terrain} tile, ${x.regrow ? "regrows" : "finite"}`);
     return p.join(" · ");
 }
 

@@ -12,9 +12,10 @@ Status: early (v0.4). The engine is stable enough to play, but the balance has h
 - Settlers arrive while there is free housing and food. Each one eats food every second, so watch the **Net** rate on each stockpile (P = production, C = consumption).
 - Assign idle villagers to **jobs** with the + and - buttons. Some jobs consume one resource to make another.
 - **Stockpiles have a capacity.** Build storehouses and granaries to raise it.
-- **Land** is limited. Every building needs a free plot, and claiming more gets pricier the more you hold.
-- **Forests regrow, quarries don't.** Cutting wood faster than the forest regrows empties it, so claim land or slow down.
-- **New Run** lets you enter a seed. The same seed gives the same world (deposit sizes) on every device.
+- **The map** is a grid of terrain tiles. Claim tiles next to your land (the price rises as you grow), then tap **Place** on a structure and tap one of your empty tiles to build it.
+- **Deposits live on tiles.** Forests regrow, hills and clay banks don't. Cutting wood faster than the forest regrows empties it.
+- **Hauling matters.** Gatherers deliver less the further their deposit tiles are from a depot (your town centre, or a Storehouse). The Land panel shows the current hauling percentage for each deposit.
+- **New Run** lets you enter a seed. The same seed gives the same map on every device.
 
 ## Cloud sync (optional)
 
@@ -34,6 +35,8 @@ The token and gist ID are stored only in that browser's local storage. Each save
 | `game.js` | Engine: simulation, rules, UI, saving, sync |
 | `gamedata.json` | All content: resources, jobs, buildings, deposits, land, population rules |
 | `validate.js`, `validate.html` | Data checker (see below) |
+| `builder.html`, `builder.js` | Form-based editor for `gamedata.json` with live validation; exports the file for you to commit |
+| `tree.html`, `tree.js` | Read-only tech tree: what unlocks, costs and feeds what |
 
 ## Checking the game data
 

@@ -1,5 +1,5 @@
 "use strict";
-let G, S, RES = {}, quiet = false;
+let G, S, RES = {}, quiet = false, hCache = null, placing = null, selTile = null;
 const KEY = "settlement_save_v2", CREDS = "settlement_gist_creds", FILE = "settlement_save.json";
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -19,11 +19,22 @@ function rng(seed) {
 
 // --- STATE ---
 function newState(seed, prev) {
-    const r = rng(seed);
-    const s = { version: 2, seed, rev: prev ? prev.rev + 1 : 0, cloudRev: prev ? prev.cloudRev : 0, lastTick: Date.now(),
-        res: {}, unlocked: {}, pop: 0, growth: 0, starve: 0, jobs: {}, bld: {}, land: G.land.start, claims: 0, dep: {},
+    const r = rng(seed), M = G.map, n = M.size, c = (n >> 1) * n + (n >> 1), tw = M.terrain.reduce((x, t) => x + t.weight, 0);
+    const map = Array.from({ length: n * n }, () => {
+        let x = r() * tw, id = M.terrain[0].id;
+        for (const t of M.terrain) { if (x < t.weight) { id = t.id; break; } x -= t.weight; }
+        return { t: id, own: false, b: null, k: Math.round(r() * 1000) / 1000 };
+    });
+    const pick = a => a[Math.floor(r() * a.length)];
+    const near = around(c, M.startRadius), ring = around(c, M.startRadius + 1, true);
+    near.concat([c]).forEach(i => map[i].own = true);
+    map[c].t = M.terrain[0].id; map[c].b = "center";
+    // terrains flagged "start" are guaranteed early so every seed is playable
+    M.terrain.filter(t => t.start).forEach(t => { map[pick(t.start === "near" ? near : ring)].t = t.id; });
+    const s = { version: 3, seed, rev: prev ? prev.rev + 1 : 0, cloudRev: prev ? prev.cloudRev : 0, lastTick: Date.now(),
+        res: {}, unlocked: {}, pop: 0, growth: 0, starve: 0, jobs: {}, bld: {}, claims: 0, map, dep: {},
         logs: [`A clearing in the wilderness (seed ${seed}). Gather wood to build shelter.`] };
-    G.deposits.forEach(d => { const k = Math.round(d.capacity * (1 - d.variance + 2 * d.variance * r())); s.dep[d.id] = { cap: k, amt: k }; });
+    G.deposits.forEach(d => { const k = poolCap(s, d); s.dep[d.id] = { cap: k, amt: k }; });
     return s;
 }
 
@@ -31,10 +42,10 @@ function ensure() { // fills in anything new in gamedata.json
     G.resources.forEach(r => { if (S.res[r.id] === undefined) S.res[r.id] = r.initial || 0; });
     G.jobs.forEach(j => { if (S.jobs[j.id] === undefined) S.jobs[j.id] = 0; });
     G.buildings.forEach(b => { if (S.bld[b.id] === undefined) S.bld[b.id] = 0; });
-    G.deposits.forEach(d => { if (!S.dep[d.id]) S.dep[d.id] = { cap: d.capacity, amt: d.capacity }; });
+    G.deposits.forEach(d => { if (!S.dep[d.id]) { const k = poolCap(S, d); S.dep[d.id] = { cap: k, amt: k }; } });
 }
 
-function startNew(seed, prev) { S = newState(seed, prev); ensure(); checkUnlocks(true); }
+function startNew(seed, prev) { S = newState(seed, prev); hCache = placing = selTile = null; ensure(); checkUnlocks(true); }
 
 // --- DATA-DRIVEN RULES ---
 function met(c) {
@@ -70,7 +81,35 @@ function eff(type, key) { // sum of a building effect type across everything bui
 
 const capOf = id => RES[id].cap + eff("capacity", id);
 const housing = () => eff("housing");
-const usedPlots = () => G.buildings.reduce((a, b) => a + S.bld[b.id] * b.uses, 0);
+// --- MAP ---
+const tileCap = (d, t) => Math.round(d.perTile * (1 - d.variance + 2 * d.variance * t.k));
+const poolCap = (st, d) => st.map.reduce((a, t) => a + (t.own && t.t === d.terrain ? tileCap(d, t) : 0), 0);
+const dist = (i, j) => { const n = G.map.size; return Math.abs((i % n) - (j % n)) + Math.abs(Math.floor(i / n) - Math.floor(j / n)); };
+const isDepot = bid => bid === "center" || (!!bid && G.buildings.find(b => b.id === bid).effects.some(e => e.type === "depot"));
+const freeTiles = () => S.map.filter(t => t.own && !t.b).length;
+const claimable = i => !S.map[i].own && around(i, 1).some(j => S.map[j].own && dist(i, j) === 1);
+function around(c, r, exact) { // tiles within Chebyshev distance r of c (exactly r when exact)
+    const n = G.map.size, out = [], cx = c % n, cy = Math.floor(c / n);
+    for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++) {
+        if (x < 0 || y < 0 || x >= n || y >= n) continue;
+        const d = Math.max(Math.abs(x - cx), Math.abs(y - cy));
+        if (d > 0 && (!exact || d === r)) out.push(y * n + x);
+    }
+    return out;
+}
+function haul(id) { // delivery efficiency: mean distance from owned deposit tiles to the nearest depot
+    if (!hCache) {
+        hCache = {};
+        const depots = []; S.map.forEach((t, i) => { if (t.own && isDepot(t.b)) depots.push(i); });
+        G.deposits.forEach(d => {
+            let sum = 0, cnt = 0;
+            S.map.forEach((t, i) => { if (t.own && t.t === d.terrain) { cnt++; sum += Math.min(...depots.map(j => dist(i, j))); } });
+            const avg = cnt ? sum / cnt : 0, M = G.map;
+            hCache[d.id] = { avg, eff: Math.max(M.minEfficiency, 1 - M.distancePenalty * Math.max(0, avg - M.freeRadius)) };
+        });
+    }
+    return hCache[id];
+}
 const getIdle = () => Math.max(0, S.pop - sum(S.jobs));
 const scaled = (cost, g, n) => {
     const m = g.type === "exp" ? Math.pow(g.rate, n) : g.type === "linear" ? 1 + g.rate * n : 1;
@@ -94,8 +133,9 @@ function flows(dt) { // production/consumption per second for the next dt second
         const d = j.deposit && S.dep[j.deposit];
         for (const k in j.outputs) {
             let o = n * j.outputs[k] * e * (1 + eff("outputMult", k));
-            if (d) { o = d.cap > 0 ? Math.min(o * d.amt / d.cap, d.amt / dt) : 0; harvest[j.deposit] = (harvest[j.deposit] || 0) + o; }
-            R[k].p += o;
+            let kept = 1;
+            if (d) { o = d.cap > 0 ? Math.min(o * d.amt / d.cap, d.amt / dt) : 0; harvest[j.deposit] = (harvest[j.deposit] || 0) + o; kept = haul(j.deposit).eff; }
+            R[k].p += o * kept;
         }
         for (const k in j.inputs || {}) R[k].c += n * j.inputs[k] * e;
     });
@@ -150,17 +190,30 @@ function adjustJob(id, delta) {
     if (delta > 0 && getIdle() > 0) S.jobs[id]++; else if (delta < 0 && S.jobs[id] > 0) S.jobs[id]--; else return;
     S.rev++; renderDynamic();
 }
-function build(id) {
-    const b = G.buildings.find(x => x.id === id), c = costOf(b);
-    if (!afford(c) || usedPlots() + b.uses > S.land) return;
-    spend(c); S.bld[id]++; S.rev++;
-    log(`Built ${b.name} (${S.bld[id]}).`); checkUnlocks(); renderAll();
+function build(id) { // enters placing mode; tapping an owned empty tile commits
+    const b = G.buildings.find(x => x.id === id);
+    if (placing === id) { placing = null; return renderMap(); }
+    if (!afford(costOf(b)) || !freeTiles()) return;
+    placing = id; selTile = null; renderMap();
 }
-function claimLand() {
-    const c = claimCost(); if (!afford(c)) return;
-    spend(c); S.claims++; S.land += G.land.plotsPerClaim; S.rev++;
-    for (const k in G.land.grants) { S.dep[k].cap += G.land.grants[k]; S.dep[k].amt += G.land.grants[k]; }
-    log(`Claimed ${G.land.plotsPerClaim} more plots of land.`); renderAll();
+function tapTile(i) {
+    const t = S.map[i];
+    if (placing && t.own && !t.b) {
+        const b = G.buildings.find(x => x.id === placing), c = costOf(b);
+        if (!afford(c)) { placing = null; return renderMap(); }
+        spend(c); t.b = b.id; S.bld[b.id]++; S.rev++; hCache = null; placing = null;
+        log(`Built ${b.name} (${S.bld[b.id]}).`); checkUnlocks(); return renderAll();
+    }
+    placing = null; selTile = selTile === i ? null : i; renderMap(); renderDynamic();
+}
+function claimTile() {
+    const c = claimCost();
+    if (selTile === null || !claimable(selTile) || !afford(c)) return;
+    const t = S.map[selTile];
+    spend(c); t.own = true; S.claims++; S.rev++; hCache = null;
+    const d = G.deposits.find(x => x.terrain === t.t);
+    if (d) { const k = tileCap(d, t); S.dep[d.id].cap += k; S.dep[d.id].amt += k; }
+    log(`Claimed a ${t.t} tile.`); selTile = null; renderAll();
 }
 
 // --- UI ---
@@ -173,7 +226,7 @@ function log(msg, spam) {
 function renderLogs() { $("log-panel").innerHTML = S.logs.map(l => `<div class="log-entry">${esc(l)}</div>`).join(""); }
 
 function renderAll() {
-    renderLogs();
+    renderLogs(); renderMap();
     const rs = G.resources.filter(r => S.unlocked["res:" + r.id]);
     const badge = "font-size:0.65rem;padding:1px 4px;";
     $("resources-list").innerHTML = rs.map(r => `<div class="stat-card"><div class="stat-card-content"><span>${r.icon} ${r.name}</span><strong id="res-val-${r.id}">0</strong><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;"><span class="rate-badge positive" style="${badge}" id="res-prod-${r.id}"></span><span class="rate-badge negative" style="${badge}" id="res-cons-${r.id}"></span><span class="rate-badge neutral" style="${badge}" id="res-net-${r.id}"></span></div></div></div>`).join("");
@@ -182,6 +235,27 @@ function renderAll() {
     $("jobs-list").innerHTML = G.jobs.filter(j => S.unlocked["job:" + j.id]).map(j => `<div class="row-item"><div class="row-info"><strong>${j.name}</strong><span>${j.inputs ? ioStr(j.inputs) + " → " : ""}${ioStr(j.outputs)}</span></div><div class="button-row" style="align-items:center;"><button onclick="adjustJob('${j.id}',-1)">-</button><span class="badge" id="job-val-${j.id}">0</span><button id="job-add-${j.id}" onclick="adjustJob('${j.id}',1)">+</button></div></div>`).join("");
     $("buildings-list").innerHTML = G.buildings.filter(b => S.unlocked["bld:" + b.id]).map(b => `<div class="row-item"><div class="row-info"><strong id="bld-name-${b.id}"></strong><span id="bld-desc-${b.id}"></span></div><button id="bld-btn-${b.id}" onclick="build('${b.id}')">Build</button></div>`).join("");
     renderDynamic();
+}
+
+function renderMap() {
+    const M = G.map, icon = {}, cb = $("claim-tile-btn");
+    M.terrain.forEach(t => icon[t.id] = t.icon);
+    const el = $("map"); el.style.gridTemplateColumns = `repeat(${M.size}, 1fr)`;
+    el.replaceChildren(...S.map.map((t, i) => {
+        const e = document.createElement("button");
+        e.className = "tile" + (t.own ? " own" : claimable(i) ? " near" : "") + (selTile === i ? " sel" : "") + (placing && t.own && !t.b ? " target" : "");
+        e.textContent = t.b === "center" ? M.centerIcon : t.b ? (G.buildings.find(x => x.id === t.b).icon || "🏗️") : icon[t.t];
+        e.onclick = () => tapTile(i); return e;
+    }));
+    const t = S.map[selTile];
+    let msg = placing ? `Tap one of your empty tiles to build ${G.buildings.find(x => x.id === placing).name}.` : "Tap a tile to inspect it; claim tiles next to your land.";
+    if (!placing && t) {
+        const d = G.deposits.find(x => x.terrain === t.t);
+        msg = `${t.t}${d ? ` · ${tileCap(d, t)} ${d.resource}` : ""} · ${t.own ? (t.b ? (t.b === "center" ? "town centre" : G.buildings.find(x => x.id === t.b).name) : "yours, empty") : claimable(selTile) ? "next to your land" : "out of reach"}`;
+    }
+    $("tile-info").textContent = msg;
+    cb.style.display = !placing && t && claimable(selTile) ? "" : "none";
+    cb.textContent = `Claim (${costStr(claimCost())})`;
 }
 
 function renderDynamic() {
@@ -194,11 +268,11 @@ function renderDynamic() {
         const n = $("res-net-" + r.id);
         if (n) { n.textContent = "Net: " + (net > 0 ? "+" : "") + net.toFixed(1); n.className = "rate-badge " + (net > 0 ? "positive" : net < 0 ? "negative" : "neutral"); }
     });
-    G.deposits.forEach(d => { const s = S.dep[d.id]; set("dep-" + d.id, `${Math.floor(s.amt)} / ${s.cap} ${d.resource} (${d.regrow ? "regrows" : "finite"})`); });
-    const free = S.land - usedPlots(), cc = claimCost(), cb = $("claim-land-btn");
-    set("land-counter", `${usedPlots()} / ${S.land} plots`);
-    set("seed-hint", `World seed ${S.seed}. Buildings need a free plot; claiming more land gets pricier the more you hold.`);
-    cb.textContent = `Claim ${G.land.plotsPerClaim} plots (${costStr(cc)})`; cb.disabled = !afford(cc);
+    G.deposits.forEach(d => { const s = S.dep[d.id], hl = haul(d.id); set("dep-" + d.id, `${Math.floor(s.amt)} / ${s.cap} ${d.resource} (${d.regrow ? "regrows" : "finite"}) · hauling ${Math.round(hl.eff * 100)}%, avg ${hl.avg.toFixed(1)} tiles`); });
+    const free = freeTiles();
+    set("land-counter", `${S.map.filter(t => t.own).length} tiles owned · ${free} free`);
+    set("seed-hint", `World seed ${S.seed}. Claim tiles next to your land (pricier as you grow) and build on them. Depots near deposits cut hauling loss.`);
+    $("claim-tile-btn").disabled = selTile === null || !afford(claimCost());
     set("pop-counter", `${S.pop} / ${housing()}`);
     set("idle-pop", getIdle());
     set("needs-hint", `(each villager consumes ${ioStr(G.pop.needs)})`);
@@ -206,15 +280,15 @@ function renderDynamic() {
     G.buildings.forEach(b => {
         const c = costOf(b);
         set("bld-name-" + b.id, `${b.name} (${S.bld[b.id]})`);
-        set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)} • Plots: ${b.uses}`);
-        const btn = $("bld-btn-" + b.id); if (btn) btn.disabled = !afford(c) || free < b.uses;
+        set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)}`);
+        const btn = $("bld-btn-" + b.id); if (btn) { btn.disabled = !(afford(c) && free) && placing !== b.id; btn.textContent = placing === b.id ? "Cancel" : "Place"; }
     });
 }
 
 // --- PERSISTENCE & SECRET GIST SYNC ---
 function saveLocal() { localStorage.setItem(KEY, JSON.stringify(S)); }
 function loadLocal() {
-    try { const p = JSON.parse(localStorage.getItem(KEY)); if (p && p.version === 2) return p; } catch (e) { console.error(e); }
+    try { const p = JSON.parse(localStorage.getItem(KEY)); if (p && p.version === 3) return p; } catch (e) { console.error(e); }
     return null;
 }
 function setStatus(msg, isErr) { const el = $("sync-status"); el.style.color = isErr ? "var(--danger)" : "var(--accent)"; el.textContent = msg; }
@@ -244,7 +318,7 @@ async function push(auto) {
     try {
         if (!auto) setStatus("Checking cloud save...");
         const cloud = await gistGet(c);
-        if (cloud && cloud.version === 2 && cloud.rev > S.cloudRev) {
+        if (cloud && cloud.version === 3 && cloud.rev > S.cloudRev) {
             if (auto) return setStatus("Auto-sync skipped: cloud has progress from another device.", true);
             if (!confirm(`Cloud save has progress from another device (saved ${new Date(cloud.lastTick).toLocaleString()}). Overwrite it with this device?`)) return setStatus("Push cancelled.");
         }
@@ -264,9 +338,9 @@ async function pull() {
     try {
         setStatus("Fetching cloud save...");
         const cloud = await gistGet(c);
-        if (!cloud || cloud.version !== 2) throw new Error("No v0.4 save in the gist yet. Push one first.");
+        if (!cloud || cloud.version !== 3) throw new Error("No v0.4 save in the gist yet. Push one first.");
         if (S.rev > S.cloudRev && !confirm("This device has progress that hasn't been pushed. Replace it with the cloud save?")) return setStatus("Pull cancelled.");
-        S = cloud; S.cloudRev = S.rev; ensure(); advance(); saveLocal(); renderAll();
+        S = cloud; S.cloudRev = S.rev; hCache = placing = selTile = null; ensure(); advance(); saveLocal(); renderAll();
         setStatus("Loaded cloud save.");
     } catch (e) { setStatus("Pull failed: " + e.message, true); }
 }
@@ -276,7 +350,7 @@ function bindEvents() {
     $("gist-token").oninput = $("gist-id").oninput = saveCreds;
     $("push-gist-btn").onclick = () => push(false);
     $("pull-gist-btn").onclick = pull;
-    $("claim-land-btn").onclick = claimLand;
+    $("claim-tile-btn").onclick = claimTile;
     $("local-save-btn").onclick = () => { saveLocal(); log("Game saved locally."); };
     $("hard-reset-btn").onclick = () => {
         if (!confirm("Start a new run? This replaces the current save.")) return;

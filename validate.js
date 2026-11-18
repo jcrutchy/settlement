@@ -57,7 +57,8 @@
         deposits.forEach(d => {
             const w = `deposit "${d.id}"`;
             if (!hasRes(d.resource)) err(w, `unknown resource "${d.resource}"`);
-            if (!isNum(d.capacity, 1)) err(w, "capacity must be a number >= 1");
+            if (!isNum(d.perTile, 1)) err(w, "perTile must be a number >= 1");
+            if (!(G.map && Array.isArray(G.map.terrain) && G.map.terrain.some(t => t.id === d.terrain))) err(w, `terrain "${d.terrain}" is not defined in map.terrain`);
             if (!isNum(d.variance) || d.variance > 1) err(w, "variance must be between 0 and 1");
             if (!isNum(d.regrow)) err(w, "regrow must be a number >= 0");
             if (!jobs.some(j => j.deposit === d.id)) warn(w, "no job harvests this deposit");
@@ -80,18 +81,19 @@
         buildings.forEach(b => {
             const w = `building "${b.id}"`;
             checkMap(b.cost, w, "cost");
+            if (!b.icon) warn(w, "missing icon (shown on the map)");
             if (!isNum(b.uses, 1)) err(w, "uses (plots) must be a number >= 1");
             checkGrowth(b.growth, w);
             walk(b.requires, w);
             if (!Array.isArray(b.effects)) return err(w, "effects must be an array (use [] for none)");
             b.effects.forEach(e => {
                 if (!isNum(e.value, 1e-12)) err(w, "effect value must be a positive number");
-                if (e.type === "housing") return;
+                if (e.type === "housing" || e.type === "depot") return;
                 if (e.type === "capacity" || e.type === "outputMult") {
                     if (e.type === "capacity" && e.resource === "*") { (capGivers["*"] = capGivers["*"] || []).push(b.id); return; }
                     if (!hasRes(e.resource)) err(w, `${e.type} effect references unknown resource "${e.resource}"`);
                     else if (e.type === "capacity") (capGivers[e.resource] = capGivers[e.resource] || []).push(b.id);
-                } else err(w, `unknown effect type "${e.type}" (housing, capacity, outputMult)`);
+                } else err(w, `unknown effect type "${e.type}" (housing, capacity, outputMult, depot)`);
             });
         });
 
@@ -100,10 +102,16 @@
         if (G.pop) ["growthRate", "growthFoodMin", "starveRate"].forEach(k => { if (!isNum(G.pop[k])) err("pop", `${k} must be a number`); });
         const L = G.land;
         if (!L) err("land", "missing land block"); else {
-            if (!isNum(L.start, 1)) err("land", "start must be >= 1");
-            if (!isNum(L.plotsPerClaim, 1)) err("land", "plotsPerClaim must be >= 1");
             checkMap(L.cost, "land", "cost"); checkGrowth(L.growth, "land");
-            for (const k in L.grants || {}) if (!ids.deposits.has(k)) err("land", `grants unknown deposit "${k}"`);
+        }
+        const M = G.map;
+        if (!M) err("map", "missing map block"); else {
+            if (!Number.isInteger(M.size) || M.size < 5 || M.size > 40) err("map", "size must be an integer from 5 to 40");
+            ["freeRadius", "distancePenalty", "startRadius"].forEach(k => { if (!isNum(M[k])) err("map", `${k} must be a number >= 0`); });
+            if (!isNum(M.minEfficiency) || M.minEfficiency > 1) err("map", "minEfficiency must be between 0 and 1");
+            if (!Array.isArray(M.terrain) || !M.terrain.length) err("map", "terrain must be a non-empty array");
+            else M.terrain.forEach(t => { if (!t.id || !t.icon || !isNum(t.weight, 1e-9)) err(`terrain "${t.id}"`, "needs id, icon and a positive weight"); });
+            if (!buildings.some(b => (b.effects || []).some(e => e.type === "depot"))) warn("map", "no building has a depot effect, so hauling distance can never be reduced");
         }
         if (!G.meta) err("meta", "missing meta block");
 

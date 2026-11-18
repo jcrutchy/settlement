@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Settlement</title>
     <!-- Bump ?v= when you change style.css or game.js; gamedata.json revalidates itself. -->
-    <link rel="stylesheet" href="style.css?v=0.41">
+    <link rel="stylesheet" href="style.css?v=0.5">
 </head>
 <body>
     <header>
@@ -43,10 +43,12 @@
                 <span id="land-counter" class="badge">0 / 0 plots</span>
             </div>
             <p class="hint" id="seed-hint"></p>
-            <div id="deposits-list" class="stack-list"></div>
-            <div class="button-row" style="margin-top: 12px;">
-                <button id="claim-land-btn">Claim land</button>
+            <div id="map" class="map"></div>
+            <div class="button-row" style="margin: 10px 0; align-items: center;">
+                <button id="claim-tile-btn" style="display:none;">Claim tile</button>
+                <span id="tile-info" class="hint" style="margin: 0;"></span>
             </div>
+            <div id="deposits-list" class="stack-list"></div>
         </section>
 
         <section class="panel" id="pop-section">
@@ -69,6 +71,6 @@
         <button id="hard-reset-btn" class="btn-danger">New Run</button>
     </footer>
 
-    <script src="game.js?v=0.4"></script>
+    <script src="game.js?v=0.5"></script>
 </body>
 </html>

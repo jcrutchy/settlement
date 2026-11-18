@@ -5,14 +5,14 @@ const SING = { resources: "resource", jobs: "job", buildings: "building", deposi
 const FIELDS = {
     resources: [["id", "id"], ["name", "text"], ["icon", "text"], ["cap", "num"], ["initial", "num", 1], ["manual", "bool", 1], ["requires", "cond", 1]],
     jobs: [["id", "id"], ["name", "text"], ["outputs", "map", 0, "resources"], ["inputs", "map", 1, "resources"], ["deposit", "ref", 1, "deposits"], ["requires", "cond", 1]],
-    buildings: [["id", "id"], ["name", "text"], ["desc", "text", 1], ["cost", "map", 0, "resources"], ["uses", "num"], ["growth", "growth", 1], ["effects", "effects"], ["requires", "cond", 1]],
-    deposits: [["id", "id"], ["name", "text"], ["resource", "ref", 0, "resources"], ["capacity", "num"], ["variance", "num"], ["regrow", "num"]]
+    buildings: [["id", "id"], ["name", "text"], ["icon", "text"], ["desc", "text", 1], ["cost", "map", 0, "resources"], ["uses", "num"], ["growth", "growth", 1], ["effects", "effects"], ["requires", "cond", 1]],
+    deposits: [["id", "id"], ["name", "text"], ["resource", "ref", 0, "resources"], ["terrain", "terr"], ["perTile", "num"], ["variance", "num"], ["regrow", "num"]]
 };
 const NEW = {
     resources: { name: "New resource", icon: "❔", cap: 100 },
     jobs: { name: "New job", outputs: {} },
     buildings: { name: "New building", cost: {}, uses: 1, effects: [] },
-    deposits: { name: "New deposit", resource: "", capacity: 100, variance: 0.2, regrow: 0 }
+    deposits: { name: "New deposit", resource: "", terrain: "forest", perTile: 100, variance: 0.2, regrow: 0 }
 };
 let D, SEC = "resources", timer; const open = new Set();
 
@@ -80,10 +80,10 @@ function growthEd(obj, opt) { // cost growth: flat / linear / exp
 
 function effectsEd(obj) { // housing / capacity / outputMult
     const box = h("div"), arr = obj.effects = obj.effects || [];
-    const fix = e => { if (e.type === "housing") delete e.resource; else if (!e.resource) e.resource = e.type === "capacity" ? "*" : ids("resources")[0] || ""; };
+    const fix = e => { if (e.type === "housing" || e.type === "depot") delete e.resource; else if (!e.resource) e.resource = e.type === "capacity" ? "*" : ids("resources")[0] || ""; };
     const draw = () => box.replaceChildren(...arr.map((e, i) => h("div", { class: "ed-row" },
-        sel(["housing", "capacity", "outputMult"], e.type, v => { e.type = v; fix(e); changed(); draw(); }),
-        e.type === "housing" ? null : sel(e.type === "capacity" ? ["*", ...ids("resources")] : ids("resources"), e.resource, v => { e.resource = v; changed(); }),
+        sel(["housing", "capacity", "outputMult", "depot"], e.type, v => { e.type = v; fix(e); changed(); draw(); }),
+        e.type === "housing" || e.type === "depot" ? null : sel(e.type === "capacity" ? ["*", ...ids("resources")] : ids("resources"), e.resource, v => { e.resource = v; changed(); }),
         numIn(e.value, v => { e.value = v ?? 0; changed(); }),
         h("button", { onclick: () => { arr.splice(i, 1); changed(); draw(); } }, "✕"))),
         h("button", { class: "btn-subtle", onclick: () => { arr.push({ type: "housing", value: 1 }); changed(); draw(); } }, "+ effect"));
@@ -101,6 +101,7 @@ function widget(sec, obj, [key, type, opt, list]) {
         case "map": return mapEd(obj, key, list, opt);
         case "cond": return condEd(obj);
         case "growth": return growthEd(obj, opt);
+        case "terr": return sel(((D.map && D.map.terrain) || []).map(t => t.id), obj[key] ?? "", upd);
         case "effects": return effectsEd(obj);
     }
 }
@@ -137,15 +138,16 @@ function card(sec, item, i) {
 }
 
 function settings() {
-    D.meta ??= {}; D.pop ??= {}; D.pop.needs ??= {}; D.land ??= {}; D.land.cost ??= {}; D.land.grants ??= {}; D.land.growth ??= { type: "flat" };
+    D.meta ??= {}; D.pop ??= {}; D.pop.needs ??= {}; D.land ??= {}; D.land.cost ??= {}; D.map ??= {}; D.land.growth ??= { type: "flat" };
     const txt = (o, k) => field(k, h("input", { type: "text", value: o[k] ?? "", oninput: e => { o[k] = e.target.value; changed(); } }));
     const num = (o, k) => field(k, numIn(o[k], v => { if (v !== undefined) { o[k] = v; changed(); } }));
     return h("div", {},
         h("section", { class: "panel ed" }, h("h2", { textContent: "Game" }), txt(D.meta, "title"), ["liveStepSec", "offlineStepSec", "maxOfflineSec", "autoSaveMs"].map(k => num(D.meta, k))),
         h("section", { class: "panel ed" }, h("h2", { textContent: "Population" }), field("needs (per villager per second)", mapEd(D.pop, "needs", "resources", 0)), ["growthRate", "growthFoodMin", "starveRate"].map(k => num(D.pop, k))),
-        h("section", { class: "panel ed" }, h("h2", { textContent: "Land" }), ["start", "plotsPerClaim"].map(k => num(D.land, k)),
-            field("cost of the first claim", mapEd(D.land, "cost", "resources", 0)), field("cost growth per claim", growthEd(D.land, 0)),
-            field("each claim adds to deposit capacity", mapEd(D.land, "grants", "deposits", 0))));
+        h("section", { class: "panel ed" }, h("h2", { textContent: "Land (per tile claimed)" }),
+            field("cost of the first claim", mapEd(D.land, "cost", "resources", 0)), field("cost growth per claim", growthEd(D.land, 0))),
+        h("section", { class: "panel ed" }, h("h2", { textContent: "Map" }), ["size", "startRadius", "freeRadius", "distancePenalty", "minEfficiency"].map(k => num(D.map, k)),
+            h("p", { class: "hint", textContent: "Terrain types are edited in gamedata.json for now." })));
 }
 
 function render() {
