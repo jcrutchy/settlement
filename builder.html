@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settlement data builder</title>
+    <link rel="stylesheet" href="style.css?v=0.42">
+    <style>
+        .ed .fld { margin: 10px 0; }
+        .lbl { display: block; font: 0.75rem var(--font-mono); color: var(--muted); margin-bottom: 3px; }
+        .ed input[type=text], .ed input[type=number], .ed select, .ed textarea {
+            background: var(--bg); color: var(--text); border: 1px solid var(--border);
+            border-radius: 4px; padding: 7px 8px; font: 0.85rem var(--font-mono); max-width: 100%; }
+        .ed input[type=text], .ed textarea { width: 100%; }
+        .ed input[type=number] { width: 7em; }
+        .ed textarea.bad { border-color: var(--danger); }
+        .ed-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+        .ed summary { cursor: pointer; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .muted { color: var(--muted); font: 0.8rem var(--font-mono); }
+        #tabs { margin-bottom: 14px; }
+        #editor > .panel { margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="title-bar">
+            <h1>DATA BUILDER</h1>
+            <a href="index.html" class="muted">back to game</a>
+        </div>
+        <div class="button-row">
+            <button id="export-btn" class="btn-primary">⬇ Export gamedata.json</button>
+            <button id="copy-btn">Copy JSON</button>
+            <button id="load-btn">Load file…</button>
+            <button id="revert-btn" class="btn-danger">Revert to repo version</button>
+            <input type="file" id="file-in" accept=".json,application/json" hidden>
+        </div>
+        <p class="hint" id="draft-note" style="margin-top:8px;"></p>
+    </header>
+    <main>
+        <details class="panel" id="issues-panel" open>
+            <summary><h2 style="display:inline">Problems</h2> <span id="summary" class="badge">...</span></summary>
+            <div id="issues" class="stack-list" style="margin-top:10px;"></div>
+        </details>
+        <div id="tabs" class="button-row">
+            <button data-sec="resources">Resources</button>
+            <button data-sec="jobs">Jobs</button>
+            <button data-sec="buildings">Buildings</button>
+            <button data-sec="deposits">Deposits</button>
+            <button data-sec="settings">Settings</button>
+        </div>
+        <div id="editor"></div>
+    </main>
+    <script src="validate.js?v=0.42"></script>
+    <script src="builder.js?v=0.42"></script>
+</body>
+</html>
