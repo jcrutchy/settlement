@@ -16,15 +16,15 @@
     { "id": "tools", "name": "Tools", "icon": "🛠️", "initial": 0, "unlocked": false, "unlockReq": { "resource": "iron", "amount": 25 } }
   ],
   "jobs": [
-    { "id": "forager", "name": "Forager", "produces": "food", "rate": 1.2 },
-    { "id": "woodcutter", "name": "Woodcutter", "produces": "wood", "rate": 0.8 },
-    { "id": "miner", "name": "Miner", "produces": "stone", "rate": 0.5, "unlockReq": { "resource": "wood", "amount": 15 } },
-    { "id": "clay_digger", "name": "Clay Digger", "produces": "clay", "rate": 0.4, "unlockReq": { "resource": "stone", "amount": 20 } },
-    { "id": "sawyer", "name": "Sawyer", "produces": "planks", "rate": 0.3, "unlockReq": { "resource": "wood", "amount": 40 } },
-    { "id": "brickmaker", "name": "Brickmaker", "produces": "bricks", "rate": 0.2, "unlockReq": { "resource": "clay", "amount": 20 } },
-    { "id": "iron_miner", "name": "Iron Miner", "produces": "iron", "rate": 0.25, "unlockReq": { "resource": "stone", "amount": 30 } },
-    { "id": "colliers", "name": "Collier", "produces": "coal", "rate": 0.4, "unlockReq": { "resource": "iron", "amount": 10 } },
-    { "id": "blacksmith", "name": "Blacksmith", "produces": "tools", "rate": 0.15, "unlockReq": { "resource": "iron", "amount": 15 } }
+      { "id": "forager", "name": "Forager", "produces": "food", "rate": 1.2 },
+      { "id": "woodcutter", "name": "Woodcutter", "produces": "wood", "rate": 0.8 },
+      { "id": "miner", "name": "Miner", "produces": "stone", "rate": 0.5, "unlockReq": { "resource": "wood", "amount": 15 } },
+      { "id": "clay_digger", "name": "Clay Digger", "produces": "clay", "rate": 0.4, "unlockReq": { "resource": "stone", "amount": 20 } },
+      { "id": "sawyer", "name": "Sawyer", "produces": "planks", "rate": 0.3, "consumes": "wood", "consumeRate": 0.3, "unlockReq": { "resource": "wood", "amount": 40 } },
+      { "id": "brickmaker", "name": "Brickmaker", "produces": "bricks", "rate": 0.2, "consumes": "clay", "consumeRate": 0.2, "unlockReq": { "resource": "clay", "amount": 20 } },
+      { "id": "iron_miner", "name": "Iron Miner", "produces": "iron", "rate": 0.25, "unlockReq": { "resource": "stone", "amount": 30 } },
+      { "id": "colliers", "name": "Collier", "produces": "coal", "rate": 0.4, "unlockReq": { "resource": "iron", "amount": 10 } },
+      { "id": "blacksmith", "name": "Blacksmith", "produces": "tools", "rate": 0.15, "consumes": "iron", "consumeRate": 0.15, "unlockReq": { "resource": "iron", "amount": 15 } }
   ],
   "buildings": [
     {

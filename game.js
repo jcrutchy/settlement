@@ -73,25 +73,44 @@ function sanitizeState() {
     });
 }
 
-// --- NET RATE CALCULATION ---
+// --- DETAILED RATE CALCULATION (P, C, NET) ---
 function calculateNetRates() {
     const rates = {};
-    gameData.resources.forEach(r => rates[r.id] = 0.0);
+    gameData.resources.forEach(r => {
+        rates[r.id] = { production: 0, consumption: 0, net: 0 };
+    });
 
     // Population consumes 0.5 food per second
-    rates['food'] -= state.population * 0.5;
+    rates['food'].consumption += state.population * 0.5;
 
     // Granary bonus multiplier for food production
     const foodMultiplier = 1 + (state.buildings.granary || 0) * 0.2;
 
-    // Job production
+    // Job production & consumption
     gameData.jobs.forEach(job => {
         const count = state.jobs[job.id] || 0;
         if (count > 0) {
-            let output = count * job.rate;
-            if (job.produces === "food") output *= foodMultiplier;
-            rates[job.produces] = (rates[job.produces] || 0) + output;
+            // Check if input resource is available
+            const hasInput = !job.consumes || (state.resources[job.consumes] > 0);
+
+            if (hasInput) {
+                // Production
+                let output = count * job.rate;
+                if (job.produces === "food") output *= foodMultiplier;
+                rates[job.produces].production += output;
+
+                // Consumption
+                if (job.consumes) {
+                    const inputDose = count * job.consumeRate;
+                    rates[job.consumes].consumption += inputDose;
+                }
+            }
         }
+    });
+
+    // Finalize net calculation for each resource
+    Object.keys(rates).forEach(resId => {
+        rates[resId].net = rates[resId].production - rates[resId].consumption;
     });
 
     return rates;
@@ -105,8 +124,8 @@ function tick(deltaSeconds = 1) {
     const rates = calculateNetRates();
 
     // 1. Apply net rates to resources
-    Object.entries(rates).forEach(([resId, netRate]) => {
-        state.resources[resId] = (state.resources[resId] || 0) + (netRate * deltaSeconds);
+    Object.entries(rates).forEach(([resId, data]) => {
+        state.resources[resId] = (state.resources[resId] || 0) + (data.net * deltaSeconds);
         if (state.resources[resId] < 0) state.resources[resId] = 0;
     });
 
@@ -253,7 +272,11 @@ function renderAll() {
                 <div class="stat-card-content">
                     <span>${r.icon} ${r.name}</span>
                     <strong id="res-val-${r.id}">0</strong>
-                    <span class="rate-badge neutral" id="res-rate-${r.id}">0.0/s</span>
+                    <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px;">
+                        <span class="rate-badge positive" id="res-prod-${r.id}" style="font-size: 0.65rem; padding: 1px 4px;">P: +0.0</span>
+                        <span class="rate-badge negative" id="res-cons-${r.id}" style="font-size: 0.65rem; padding: 1px 4px;">C: -0.0</span>
+                        <span class="rate-badge neutral" id="res-net-${r.id}" style="font-size: 0.65rem; padding: 1px 4px;">Net: 0.0</span>
+                    </div>
                 </div>
             </div>`;
         const btn = document.createElement("button");
@@ -306,14 +329,20 @@ function renderDynamic() {
 
     gameData.resources.forEach(r => {
         const valEl = document.getElementById(`res-val-${r.id}`);
-        const rateEl = document.getElementById(`res-rate-${r.id}`);
+        const prodEl = document.getElementById(`res-prod-${r.id}`);
+        const consEl = document.getElementById(`res-cons-${r.id}`);
+        const netEl = document.getElementById(`res-net-${r.id}`);
+
         if (valEl) valEl.textContent = Math.floor(state.resources[r.id] || 0);
-        
-        if (rateEl) {
-            const net = rates[r.id] || 0;
-            const sign = net > 0 ? "+" : "";
-            rateEl.textContent = `${sign}${net.toFixed(1)}/s`;
-            rateEl.className = "rate-badge " + (net > 0 ? "positive" : net < 0 ? "negative" : "neutral");
+
+        const data = rates[r.id] || { production: 0, consumption: 0, net: 0 };
+
+        if (prodEl) prodEl.textContent = `P: +${data.production.toFixed(1)}`;
+        if (consEl) consEl.textContent = `C: -${data.consumption.toFixed(1)}`;
+        if (netEl) {
+            const sign = data.net > 0 ? "+" : "";
+            netEl.textContent = `Net: ${sign}${data.net.toFixed(1)}`;
+            netEl.className = "rate-badge " + (data.net > 0 ? "positive" : data.net < 0 ? "negative" : "neutral");
         }
     });
 
