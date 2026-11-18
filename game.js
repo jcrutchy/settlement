@@ -1,555 +1,305 @@
-let gameData = null;
-let state = {
-    version: 1,
-    lastTick: Date.now(),
-    resources: {},
-    unlocks: { resources: {}, jobs: {}, buildings: {} },
-    population: 0,
-    jobs: {},
-    buildings: {},
-    logs: ["A clearing in the wilderness. Gather wood to build shelter."]
+"use strict";
+let G, S, RES = {}, quiet = false;
+const KEY = "settlement_save_v2", CREDS = "settlement_gist_creds", FILE = "settlement_save.json";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const sum = o => Object.values(o).reduce((a, b) => a + b, 0);
+const creds = () => JSON.parse(localStorage.getItem(CREDS) || "{}");
+const randSeed = () => (Math.random() * 2147483647) >>> 0;
+const toSeed = t => /^\d+$/.test(t) ? (+t) >>> 0 : [...t].reduce((a, ch) => Math.imul(a ^ ch.charCodeAt(0), 16777619) >>> 0, 2166136261);
+const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(Math.floor(n));
+const costStr = c => Object.entries(c).map(([k, v]) => `${v} ${k}`).join(", ");
+const ioStr = o => Object.entries(o || {}).map(([k, v]) => `${v}/s ${k}`).join(" + ");
+
+// Seeded PRNG (mulberry32): same seed -> same world on every device
+function rng(seed) {
+    let a = seed >>> 0;
+    return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+// --- STATE ---
+function newState(seed, prev) {
+    const r = rng(seed);
+    const s = { version: 2, seed, rev: prev ? prev.rev + 1 : 0, cloudRev: prev ? prev.cloudRev : 0, lastTick: Date.now(),
+        res: {}, unlocked: {}, pop: 0, growth: 0, starve: 0, jobs: {}, bld: {}, land: G.land.start, claims: 0, dep: {},
+        logs: [`A clearing in the wilderness (seed ${seed}). Gather wood to build shelter.`] };
+    G.deposits.forEach(d => { const k = Math.round(d.capacity * (1 - d.variance + 2 * d.variance * r())); s.dep[d.id] = { cap: k, amt: k }; });
+    return s;
+}
+
+function ensure() { // fills in anything new in gamedata.json
+    G.resources.forEach(r => { if (S.res[r.id] === undefined) S.res[r.id] = r.initial || 0; });
+    G.jobs.forEach(j => { if (S.jobs[j.id] === undefined) S.jobs[j.id] = 0; });
+    G.buildings.forEach(b => { if (S.bld[b.id] === undefined) S.bld[b.id] = 0; });
+    G.deposits.forEach(d => { if (!S.dep[d.id]) S.dep[d.id] = { cap: d.capacity, amt: d.capacity }; });
+}
+
+function startNew(seed, prev) { S = newState(seed, prev); ensure(); checkUnlocks(true); }
+
+// --- DATA-DRIVEN RULES ---
+function met(c) {
+    if (!c) return true;
+    if (c.all) return c.all.every(met);
+    if (c.any) return c.any.some(met);
+    if (c.resource) return S.res[c.resource] >= c.gte;
+    if (c.building) return S.bld[c.building] >= c.gte;
+    return false;
+}
+
+function checkUnlocks(silent) {
+    let changed = false;
+    [["res", G.resources, "Discovered resource"], ["job", G.jobs, "New role available"], ["bld", G.buildings, "New structure unlocked"]].forEach(([k, list, msg]) => {
+        list.forEach(x => {
+            const key = k + ":" + x.id;
+            if (!S.unlocked[key] && met(x.requires)) { S.unlocked[key] = true; changed = true; if (!silent) log(`${msg}: ${x.name}.`); }
+        });
+    });
+    return changed;
+}
+
+function eff(type, key) { // sum of a building effect type across everything built
+    let t = 0;
+    G.buildings.forEach(b => {
+        const n = S.bld[b.id];
+        if (n) b.effects.forEach(e => {
+            if (e.type === type && (key === undefined || e.resource === key || (type === "capacity" && e.resource === "*"))) t += e.value * n;
+        });
+    });
+    return t;
+}
+
+const capOf = id => RES[id].cap + eff("capacity", id);
+const housing = () => eff("housing");
+const usedPlots = () => G.buildings.reduce((a, b) => a + S.bld[b.id] * b.uses, 0);
+const getIdle = () => Math.max(0, S.pop - sum(S.jobs));
+const scaled = (cost, g, n) => {
+    const m = g.type === "exp" ? Math.pow(g.rate, n) : g.type === "linear" ? 1 + g.rate * n : 1;
+    const c = {}; for (const k in cost) c[k] = Math.ceil(cost[k] * m); return c;
 };
+const costOf = b => scaled(b.cost, b.growth || {}, S.bld[b.id]);
+const claimCost = () => scaled(G.land.cost, G.land.growth, S.claims);
+const afford = c => Object.entries(c).every(([k, v]) => S.res[k] >= v);
+const spend = c => { for (const k in c) S.res[k] -= c[k]; };
 
-const STORAGE_KEY = "settlement_save_v1";
-const CREDS_KEY = "settlement_gist_creds";
-const GIST_FILENAME = "settlement_save.json";
-
-// --- INITIALIZATION ---
-async function init() {
-    const res = await fetch("gamedata.json?t=" + Date.now());
-    gameData = await res.json();
-    document.getElementById("game-title").textContent = gameData.meta.title;
-
-    initDefaultState();
-    loadLocalSave();
-    loadCredsUI();
-    updateSyncUIState();
-    bindEvents();
-    calculateOfflineProgress();
-
-    checkUnlocks();
-    renderAll();
-
-    setInterval(tick, gameData.meta.tickRateMs);
-    setInterval(saveLocal, gameData.meta.autoSaveMs);
+// --- SIMULATION ---
+function flows(dt) { // production/consumption per second for the next dt seconds
+    const R = {}, harvest = {};
+    G.resources.forEach(r => R[r.id] = { p: 0, c: 0 });
+    for (const k in G.pop.needs) R[k].c += S.pop * G.pop.needs[k];
+    G.jobs.forEach(j => {
+        const n = S.jobs[j.id]; if (!n) return;
+        let e = 1; // efficiency: limited by input stock
+        for (const k in j.inputs || {}) { const need = n * j.inputs[k] * dt; if (need > 0) e = Math.min(e, S.res[k] / need); }
+        e = Math.min(1, e);
+        const d = j.deposit && S.dep[j.deposit];
+        for (const k in j.outputs) {
+            let o = n * j.outputs[k] * e * (1 + eff("outputMult", k));
+            if (d) { o = d.cap > 0 ? Math.min(o * d.amt / d.cap, d.amt / dt) : 0; harvest[j.deposit] = (harvest[j.deposit] || 0) + o; }
+            R[k].p += o;
+        }
+        for (const k in j.inputs || {}) R[k].c += n * j.inputs[k] * e;
+    });
+    return { R, harvest };
 }
 
-function initDefaultState() {
-    gameData.resources.forEach(r => {
-        state.resources[r.id] = r.initial || 0;
-        state.unlocks.resources[r.id] = !!r.unlocked;
-    });
-    gameData.jobs.forEach(j => {
-        state.jobs[j.id] = 0;
-        state.unlocks.jobs[j.id] = !j.unlockReq;
-    });
-    gameData.buildings.forEach(b => {
-        state.buildings[b.id] = 0;
-        state.unlocks.buildings[b.id] = !!b.unlocked;
-    });
+function trimJobs() {
+    let over = sum(S.jobs) - S.pop;
+    for (const k of Object.keys(S.jobs)) while (over > 0 && S.jobs[k] > 0) { S.jobs[k]--; over--; }
 }
 
-// --- STATE SANITIZATION (SCHEMA MIGRATION) ---
-function sanitizeState() {
-    gameData.resources.forEach(r => {
-        if (state.resources[r.id] === undefined) {
-            state.resources[r.id] = r.initial || 0;
-            state.unlocks.resources[r.id] = !!r.unlocked;
-        }
+function step(dt) {
+    const { R, harvest } = flows(dt);
+    G.resources.forEach(r => { const x = R[r.id]; S.res[r.id] = Math.max(0, Math.min(S.res[r.id] + (x.p - x.c) * dt, capOf(r.id))); });
+    G.deposits.forEach(d => { // logistic regrowth; tiny floor so a depleted deposit can recover
+        const s = S.dep[d.id], seed = Math.max(s.amt, 0.02 * s.cap);
+        s.amt = Math.max(0, Math.min(s.cap, s.amt - (harvest[d.id] || 0) * dt + d.regrow * seed * (1 - s.amt / s.cap) * dt));
     });
-
-    gameData.jobs.forEach(j => {
-        if (state.jobs[j.id] === undefined) {
-            state.jobs[j.id] = 0;
-            state.unlocks.jobs[j.id] = !j.unlockReq;
-        }
-    });
-
-    gameData.buildings.forEach(b => {
-        if (state.buildings[b.id] === undefined) {
-            state.buildings[b.id] = 0;
-            state.unlocks.buildings[b.id] = !!b.unlocked;
-        }
-    });
-}
-
-// --- DETAILED RATE CALCULATION (P, C, NET) ---
-function calculateNetRates() {
-    const rates = {};
-    gameData.resources.forEach(r => {
-        rates[r.id] = { production: 0, consumption: 0, net: 0 };
-    });
-
-    // Population consumes 0.5 food per second
-    rates['food'].consumption += state.population * 0.5;
-
-    // Granary bonus multiplier for food production
-    const foodMultiplier = 1 + (state.buildings.granary || 0) * 0.2;
-
-    // Job production & consumption
-    gameData.jobs.forEach(job => {
-        const count = state.jobs[job.id] || 0;
-        if (count > 0) {
-            // Check if input resource is available
-            const hasInput = !job.consumes || (state.resources[job.consumes] > 0);
-
-            if (hasInput) {
-                // Production
-                let output = count * job.rate;
-                if (job.produces === "food") output *= foodMultiplier;
-                rates[job.produces].production += output;
-
-                // Consumption
-                if (job.consumes) {
-                    const inputDose = count * job.consumeRate;
-                    rates[job.consumes].consumption += inputDose;
-                }
-            }
-        }
-    });
-
-    // Finalize net calculation for each resource
-    Object.keys(rates).forEach(resId => {
-        rates[resId].net = rates[resId].production - rates[resId].consumption;
-    });
-
-    return rates;
-}
-
-// --- CORE SIMULATION LOOP ---
-function tick(deltaSeconds = 1) {
-    const now = Date.now();
-    state.lastTick = now;
-
-    const rates = calculateNetRates();
-
-    // 1. Apply net rates to resources
-    Object.entries(rates).forEach(([resId, data]) => {
-        state.resources[resId] = (state.resources[resId] || 0) + (data.net * deltaSeconds);
-        if (state.resources[resId] < 0) state.resources[resId] = 0;
-    });
-
-    // 2. Starvation check if food hit 0
-    if (state.resources.food <= 0 && state.population > 0) {
-        if (Math.random() < 0.2 * deltaSeconds) {
-            state.population--;
-            unassignExcessWorkers();
-            addLog("Starvation! A settler has abandoned the camp.");
+    if (S.res.food <= 0 && S.pop > 0) { // deterministic: progress accumulates, no dice
+        S.starve += G.pop.starveRate * dt;
+        if (S.starve >= 1) { S.starve -= 1; S.pop--; trimJobs(); log("Starvation! A settler has left the camp.", true); }
+    } else {
+        S.starve = 0;
+        if (S.pop < housing() && S.res.food >= G.pop.growthFoodMin) {
+            S.growth += G.pop.growthRate * dt;
+            if (S.growth >= 1) { S.growth -= 1; S.pop++; log("A new settler arrived at your camp.", true); }
         }
     }
-
-    // 3. Housing & Population Growth
-    const maxPop = getMaxHousing();
-    if (state.population < maxPop && state.resources.food >= 10) {
-        if (Math.random() < 0.15 * deltaSeconds) {
-            state.population++;
-            addLog("A new settler arrived at your camp.");
-        }
-    }
-
-    // 4. Evaluate Unlocks
-    checkUnlocks();
-    renderDynamic();
 }
 
-function calculateOfflineProgress() {
-    const elapsedSec = Math.floor((Date.now() - state.lastTick) / 1000);
-    if (elapsedSec > 5) {
-        const simSec = Math.min(elapsedSec, 28800);
-        tick(simSec);
-        addLog(`Welcome back. Simulated ${simSec}s of offline progress.`);
-    }
+function advance() { // simulate real elapsed time since lastTick, in chunks
+    const now = Date.now(), total = Math.min((now - S.lastTick) / 1000, G.meta.maxOfflineSec);
+    S.lastTick = now;
+    if (total <= 0) return false;
+    const away = total > 10, st = away ? G.meta.offlineStepSec : G.meta.liveStepSec, p0 = S.pop;
+    let left = total;
+    quiet = away;
+    while (left > 0) { const dt = Math.min(st, left); step(dt); left -= dt; }
+    quiet = false;
+    if (away) log(`Welcome back. Simulated ${Math.round(total / 60)} min away; population ${S.pop >= p0 ? "+" : ""}${S.pop - p0}.`);
+    return checkUnlocks();
 }
 
-function checkUnlocks() {
-    const checkReq = (req) => !req || (state.resources[req.resource] || 0) >= req.amount;
-
-    gameData.resources.forEach(r => {
-        if (!state.unlocks.resources[r.id] && checkReq(r.unlockReq)) {
-            state.unlocks.resources[r.id] = true;
-            addLog(`Discovered resource: ${r.name}.`);
-            renderAll();
-        }
-    });
-
-    gameData.jobs.forEach(j => {
-        if (!state.unlocks.jobs[j.id] && checkReq(j.unlockReq)) {
-            state.unlocks.jobs[j.id] = true;
-            addLog(`New role available: ${j.name}.`);
-            renderAll();
-        }
-    });
-
-    gameData.buildings.forEach(b => {
-        if (!state.unlocks.buildings[b.id] && checkReq(b.unlockReq)) {
-            state.unlocks.buildings[b.id] = true;
-            addLog(`New structure unlocked: ${b.name}.`);
-            renderAll();
-        }
-    });
+// --- PLAYER ACTIONS (each bumps rev, which drives sync conflict detection) ---
+function gather(id) {
+    const d = G.deposits.find(x => x.resource === id);
+    if ((d && S.dep[d.id].amt < 1) || S.res[id] >= capOf(id)) return;
+    S.res[id]++; if (d) S.dep[d.id].amt--;
+    S.rev++; checkUnlocks(); renderDynamic();
+}
+function adjustJob(id, delta) {
+    if (delta > 0 && getIdle() > 0) S.jobs[id]++; else if (delta < 0 && S.jobs[id] > 0) S.jobs[id]--; else return;
+    S.rev++; renderDynamic();
+}
+function build(id) {
+    const b = G.buildings.find(x => x.id === id), c = costOf(b);
+    if (!afford(c) || usedPlots() + b.uses > S.land) return;
+    spend(c); S.bld[id]++; S.rev++;
+    log(`Built ${b.name} (${S.bld[id]}).`); checkUnlocks(); renderAll();
+}
+function claimLand() {
+    const c = claimCost(); if (!afford(c)) return;
+    spend(c); S.claims++; S.land += G.land.plotsPerClaim; S.rev++;
+    for (const k in G.land.grants) { S.dep[k].cap += G.land.grants[k]; S.dep[k].amt += G.land.grants[k]; }
+    log(`Claimed ${G.land.plotsPerClaim} more plots of land.`); renderAll();
 }
 
-// --- PLAYER ACTIONS ---
-function gatherManual(resId) {
-    state.resources[resId] = (state.resources[resId] || 0) + 1;
-    checkUnlocks();
-    renderDynamic();
+// --- UI ---
+function log(msg, spam) {
+    if (spam && quiet) return;
+    S.logs.unshift(`[${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}] ${msg}`);
+    S.logs.length = Math.min(S.logs.length, 20);
+    if (!quiet) renderLogs();
 }
+function renderLogs() { $("log-panel").innerHTML = S.logs.map(l => `<div class="log-entry">${esc(l)}</div>`).join(""); }
 
-function adjustJob(jobId, delta) {
-    const idle = getIdlePop();
-    if (delta > 0 && idle > 0) {
-        state.jobs[jobId]++;
-    } else if (delta < 0 && state.jobs[jobId] > 0) {
-        state.jobs[jobId]--;
-    }
-    renderDynamic();
-}
-
-function buildStructure(bId) {
-    const bDef = gameData.buildings.find(b => b.id === bId);
-    const cost = getBuildingCost(bDef);
-    if (!canAfford(cost)) return;
-
-    Object.entries(cost).forEach(([res, amt]) => {
-        state.resources[res] -= amt;
-    });
-    state.buildings[bId]++;
-    addLog(`Constructed ${bDef.name} (${state.buildings[bId]}).`);
-    renderAll();
-}
-
-// --- HELPERS ---
-function getMaxHousing() {
-    return (state.buildings.hut || 0) * 2 + (state.buildings.cabin || 0) * 5;
-}
-
-function getIdlePop() {
-    const assigned = Object.values(state.jobs).reduce((a, b) => a + b, 0);
-    return Math.max(0, state.population - assigned);
-}
-
-function unassignExcessWorkers() {
-    while (getIdlePop() < 0 || Object.values(state.jobs).reduce((a, b) => a + b, 0) > state.population) {
-        const activeJob = Object.keys(state.jobs).find(k => state.jobs[k] > 0);
-        if (activeJob) state.jobs[activeJob]--;
-        else break;
-    }
-}
-
-function getBuildingCost(bDef) {
-    const count = state.buildings[bDef.id] || 0;
-    const cost = {};
-    Object.entries(bDef.baseCost).forEach(([res, base]) => {
-        cost[res] = Math.floor(base * Math.pow(bDef.costMultiplier, count));
-    });
-    return cost;
-}
-
-function canAfford(cost) {
-    return Object.entries(cost).every(([res, amt]) => (state.resources[res] || 0) >= amt);
-}
-
-function addLog(msg) {
-    state.logs.unshift(`[${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}] ${msg}`);
-    if (state.logs.length > 20) state.logs.pop();
-    renderLogs();
-}
-
-// --- UI RENDERING ---
 function renderAll() {
     renderLogs();
-
-    const resContainer = document.getElementById("resources-list");
-    const btnContainer = document.getElementById("manual-actions");
-    resContainer.innerHTML = "";
-    btnContainer.innerHTML = "";
-
-    gameData.resources.forEach(r => {
-        if (!state.unlocks.resources[r.id]) return;
-        resContainer.innerHTML += `
-            <div class="stat-card">
-                <div class="stat-card-content">
-                    <span>${r.icon} ${r.name}</span>
-                    <strong id="res-val-${r.id}">0</strong>
-                    <div style="display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px;">
-                        <span class="rate-badge positive" id="res-prod-${r.id}" style="font-size: 0.65rem; padding: 1px 4px;">P: +0.0</span>
-                        <span class="rate-badge negative" id="res-cons-${r.id}" style="font-size: 0.65rem; padding: 1px 4px;">C: -0.0</span>
-                        <span class="rate-badge neutral" id="res-net-${r.id}" style="font-size: 0.65rem; padding: 1px 4px;">Net: 0.0</span>
-                    </div>
-                </div>
-            </div>`;
-        const btn = document.createElement("button");
-        btn.textContent = `+ Gather ${r.name}`;
-        btn.onclick = () => gatherManual(r.id);
-        btnContainer.appendChild(btn);
-    });
-
-    const jobsContainer = document.getElementById("jobs-list");
-    jobsContainer.innerHTML = "";
-    gameData.jobs.forEach(j => {
-        if (!state.unlocks.jobs[j.id]) return;
-        const row = document.createElement("div");
-        row.className = "row-item";
-        row.innerHTML = `
-            <div class="row-info">
-                <strong>${j.name}</strong>
-                <span>+${j.rate}/s ${j.produces}</span>
-            </div>
-            <div class="button-row" style="align-items:center;">
-                <button onclick="adjustJob('${j.id}', -1)">-</button>
-                <span class="badge" id="job-val-${j.id}">0</span>
-                <button onclick="adjustJob('${j.id}', 1)">+</button>
-            </div>`;
-        jobsContainer.appendChild(row);
-    });
-
-    const bldContainer = document.getElementById("buildings-list");
-    bldContainer.innerHTML = "";
-    gameData.buildings.forEach(b => {
-        if (!state.unlocks.buildings[b.id]) return;
-        const cost = getBuildingCost(b);
-        const costStr = Object.entries(cost).map(([k, v]) => `${v} ${k}`).join(", ");
-        const row = document.createElement("div");
-        row.className = "row-item";
-        row.innerHTML = `
-            <div class="row-info">
-                <strong>${b.name} (${state.buildings[b.id] || 0})</strong>
-                <span>${b.desc} • Cost: ${costStr}</span>
-            </div>
-            <button id="bld-btn-${b.id}" onclick="buildStructure('${b.id}')">Build</button>`;
-        bldContainer.appendChild(row);
-    });
-
+    const rs = G.resources.filter(r => S.unlocked["res:" + r.id]);
+    const badge = "font-size:0.65rem;padding:1px 4px;";
+    $("resources-list").innerHTML = rs.map(r => `<div class="stat-card"><div class="stat-card-content"><span>${r.icon} ${r.name}</span><strong id="res-val-${r.id}">0</strong><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;"><span class="rate-badge positive" style="${badge}" id="res-prod-${r.id}"></span><span class="rate-badge negative" style="${badge}" id="res-cons-${r.id}"></span><span class="rate-badge neutral" style="${badge}" id="res-net-${r.id}"></span></div></div></div>`).join("");
+    $("manual-actions").innerHTML = rs.filter(r => r.manual).map(r => `<button onclick="gather('${r.id}')">+ Gather ${r.name}</button>`).join("");
+    $("deposits-list").innerHTML = G.deposits.map(d => `<div class="row-item"><div class="row-info"><strong>${d.name}</strong><span id="dep-${d.id}"></span></div></div>`).join("");
+    $("jobs-list").innerHTML = G.jobs.filter(j => S.unlocked["job:" + j.id]).map(j => `<div class="row-item"><div class="row-info"><strong>${j.name}</strong><span>${j.inputs ? ioStr(j.inputs) + " → " : ""}${ioStr(j.outputs)}</span></div><div class="button-row" style="align-items:center;"><button onclick="adjustJob('${j.id}',-1)">-</button><span class="badge" id="job-val-${j.id}">0</span><button id="job-add-${j.id}" onclick="adjustJob('${j.id}',1)">+</button></div></div>`).join("");
+    $("buildings-list").innerHTML = G.buildings.filter(b => S.unlocked["bld:" + b.id]).map(b => `<div class="row-item"><div class="row-info"><strong id="bld-name-${b.id}"></strong><span id="bld-desc-${b.id}"></span></div><button id="bld-btn-${b.id}" onclick="build('${b.id}')">Build</button></div>`).join("");
     renderDynamic();
 }
 
 function renderDynamic() {
-    const rates = calculateNetRates();
-
-    gameData.resources.forEach(r => {
-        const valEl = document.getElementById(`res-val-${r.id}`);
-        const prodEl = document.getElementById(`res-prod-${r.id}`);
-        const consEl = document.getElementById(`res-cons-${r.id}`);
-        const netEl = document.getElementById(`res-net-${r.id}`);
-
-        if (valEl) valEl.textContent = Math.floor(state.resources[r.id] || 0);
-
-        const data = rates[r.id] || { production: 0, consumption: 0, net: 0 };
-
-        if (prodEl) prodEl.textContent = `P: +${data.production.toFixed(1)}`;
-        if (consEl) consEl.textContent = `C: -${data.consumption.toFixed(1)}`;
-        if (netEl) {
-            const sign = data.net > 0 ? "+" : "";
-            netEl.textContent = `Net: ${sign}${data.net.toFixed(1)}`;
-            netEl.className = "rate-badge " + (data.net > 0 ? "positive" : data.net < 0 ? "negative" : "neutral");
-        }
+    const { R } = flows(1), set = (id, t) => { const e = $(id); if (e) e.textContent = t; };
+    G.resources.forEach(r => {
+        const x = R[r.id], net = x.p - x.c;
+        set("res-val-" + r.id, fmt(S.res[r.id]) + " / " + fmt(capOf(r.id)));
+        set("res-prod-" + r.id, "P: +" + x.p.toFixed(1));
+        set("res-cons-" + r.id, "C: -" + x.c.toFixed(1));
+        const n = $("res-net-" + r.id);
+        if (n) { n.textContent = "Net: " + (net > 0 ? "+" : "") + net.toFixed(1); n.className = "rate-badge " + (net > 0 ? "positive" : net < 0 ? "negative" : "neutral"); }
     });
-
-    document.getElementById("pop-counter").textContent = `${state.population} / ${getMaxHousing()}`;
-    document.getElementById("idle-pop").textContent = getIdlePop();
-
-    gameData.jobs.forEach(j => {
-        const el = document.getElementById(`job-val-${j.id}`);
-        if (el) el.textContent = state.jobs[j.id] || 0;
-    });
-
-    gameData.buildings.forEach(b => {
-        const btn = document.getElementById(`bld-btn-${b.id}`);
-        if (btn) btn.disabled = !canAfford(getBuildingCost(b));
+    G.deposits.forEach(d => { const s = S.dep[d.id]; set("dep-" + d.id, `${Math.floor(s.amt)} / ${s.cap} ${d.resource} (${d.regrow ? "regrows" : "finite"})`); });
+    const free = S.land - usedPlots(), cc = claimCost(), cb = $("claim-land-btn");
+    set("land-counter", `${usedPlots()} / ${S.land} plots`);
+    set("seed-hint", `World seed ${S.seed}. Buildings need a free plot; claiming more land gets pricier the more you hold.`);
+    cb.textContent = `Claim ${G.land.plotsPerClaim} plots (${costStr(cc)})`; cb.disabled = !afford(cc);
+    set("pop-counter", `${S.pop} / ${housing()}`);
+    set("idle-pop", getIdle());
+    set("needs-hint", `(each villager consumes ${ioStr(G.pop.needs)})`);
+    G.jobs.forEach(j => { set("job-val-" + j.id, S.jobs[j.id]); const a = $("job-add-" + j.id); if (a) a.disabled = getIdle() < 1; });
+    G.buildings.forEach(b => {
+        const c = costOf(b);
+        set("bld-name-" + b.id, `${b.name} (${S.bld[b.id]})`);
+        set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)} • Plots: ${b.uses}`);
+        const btn = $("bld-btn-" + b.id); if (btn) btn.disabled = !afford(c) || free < b.uses;
     });
 }
 
-function renderLogs() {
-    const box = document.getElementById("log-panel");
-    box.innerHTML = state.logs.map(l => `<div class="log-entry">${l}</div>`).join("");
+// --- PERSISTENCE & SECRET GIST SYNC ---
+function saveLocal() { localStorage.setItem(KEY, JSON.stringify(S)); }
+function loadLocal() {
+    try { const p = JSON.parse(localStorage.getItem(KEY)); if (p && p.version === 2) return p; } catch (e) { console.error(e); }
+    return null;
+}
+function setStatus(msg, isErr) { const el = $("sync-status"); el.style.color = isErr ? "var(--danger)" : "var(--accent)"; el.textContent = msg; }
+function syncUI() {
+    const c = creds(), ok = !!(c.token && c.gistId);
+    $("pull-gist-btn").style.display = $("push-gist-btn").style.display = ok ? "inline-block" : "none";
+}
+function loadCredsUI() { const c = creds(); $("gist-token").value = c.token || ""; $("gist-id").value = c.gistId || ""; }
+function saveCreds() {
+    localStorage.setItem(CREDS, JSON.stringify({ token: $("gist-token").value.trim(), gistId: $("gist-id").value.trim() }));
+    syncUI();
+}
+const gistHeaders = c => ({ Authorization: `Bearer ${c.token}`, Accept: "application/vnd.github+json" });
+
+async function gistGet(c) {
+    const r = await fetch(`https://api.github.com/gists/${c.gistId}`, { headers: gistHeaders(c) });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const f = (await r.json()).files[FILE];
+    return f && f.content ? JSON.parse(f.content) : null;
 }
 
-// --- LOCAL & SECRET GIST PERSISTENCE ---
-function saveLocal() {
-    state.lastTick = Date.now();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function loadLocalSave() {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-        try {
-            const parsed = JSON.parse(raw);
-            state = { ...state, ...parsed };
-            sanitizeState();
-        } catch (e) {
-            console.error("Failed to parse local save", e);
-        }
-    }
-}
-
-function loadCredsUI() {
-    const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
-    if (creds.token) document.getElementById("gist-token").value = creds.token;
-    if (creds.gistId) document.getElementById("gist-id").value = creds.gistId;
-}
-
-function saveCredsAuto() {
-    const token = document.getElementById("gist-token").value.trim();
-    const gistId = document.getElementById("gist-id").value.trim();
-    localStorage.setItem(CREDS_KEY, JSON.stringify({ token, gistId }));
-    updateSyncUIState();
-}
-
-function updateSyncUIState() {
-    const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
-    const hasCreds = !!(creds.token && creds.gistId);
-
-    const pullBtn = document.getElementById("pull-gist-btn");
-    const pushBtn = document.getElementById("push-gist-btn");
-
-    if (hasCreds) {
-        pullBtn.style.display = "inline-block";
-        pushBtn.style.display = "inline-block";
-        pushBtn.disabled = false;
-        pushBtn.title = "";
-    } else {
-        pullBtn.style.display = "none";
-        pushBtn.style.display = "none";
-    }
-}
-
-function setSyncStatus(msg, isError = false) {
-    const el = document.getElementById("sync-status");
-    el.style.color = isError ? "var(--danger)" : "var(--accent)";
-    el.textContent = msg;
-}
-
-async function pushToGist(isAuto = false) {
-    const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
-    if (!creds.token || !creds.gistId) return;
-
-    saveLocal();
-    if (!isAuto) setSyncStatus("Checking cloud state before push...");
-    
+// Conflict rule: rev counts player actions. cloudRev = the rev we last pulled/pushed.
+// If the cloud's rev is higher than that, another device made progress we haven't seen.
+async function push(auto) {
+    const c = creds(); if (!c.token || !c.gistId) return;
+    if (auto && S.rev <= S.cloudRev) return; // nothing new to send
     try {
-        const checkRes = await fetch(`https://api.github.com/gists/${creds.gistId}`, {
-            headers: {
-                "Authorization": `Bearer ${creds.token}`,
-                "Accept": "application/vnd.github+json"
-            }
-        });
-        
-        if (checkRes.ok) {
-            const data = await checkRes.json();
-            const fileContent = data.files[GIST_FILENAME]?.content;
-            if (fileContent) {
-                const cloudState = JSON.parse(fileContent);
-                if (cloudState.lastTick && cloudState.lastTick > state.lastTick + 5000 && !isAuto) {
-                    const localTime = new Date(state.lastTick).toLocaleTimeString();
-                    const cloudTime = new Date(cloudState.lastTick).toLocaleTimeString();
-                    if (!confirm(`Warning: Cloud save is newer (${cloudTime}) than this device (${localTime}). Overwrite cloud with this device's progress?`)) {
-                        setSyncStatus("Push canceled to prevent overwriting newer progress.");
-                        return;
-                    }
-                }
-            }
+        if (!auto) setStatus("Checking cloud save...");
+        const cloud = await gistGet(c);
+        if (cloud && cloud.version === 2 && cloud.rev > S.cloudRev) {
+            if (auto) return setStatus("Auto-sync skipped: cloud has progress from another device.", true);
+            if (!confirm(`Cloud save has progress from another device (saved ${new Date(cloud.lastTick).toLocaleString()}). Overwrite it with this device?`)) return setStatus("Push cancelled.");
         }
-
-        if (!isAuto) setSyncStatus("Pushing save to Secret Gist...");
-        const res = await fetch(`https://api.github.com/gists/${creds.gistId}`, {
-            method: "PATCH",
-            headers: {
-                "Authorization": `Bearer ${creds.token}`,
-                "Accept": "application/vnd.github+json",
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } }
-            })
+        advance(); saveLocal();
+        const r = await fetch(`https://api.github.com/gists/${c.gistId}`, {
+            method: "PATCH", headers: { ...gistHeaders(c), "Content-Type": "application/json" },
+            body: JSON.stringify({ files: { [FILE]: { content: JSON.stringify(S) } } })
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        if (!isAuto) setSyncStatus(`Synced to Gist at ${new Date().toLocaleTimeString()}.`);
-    } catch (err) {
-        if (!isAuto) setSyncStatus(`Push failed: ${err.message}`, true);
-    }
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        S.cloudRev = S.rev; saveLocal();
+        setStatus(`Synced at ${new Date().toLocaleTimeString()}.`);
+    } catch (e) { setStatus("Push failed: " + e.message, true); }
 }
 
-async function pullFromGist() {
-    const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
-    if (!creds.token || !creds.gistId) return setSyncStatus("Enter Token & Gist ID first.", true);
-
-    setSyncStatus("Fetching save from Secret Gist...");
+async function pull() {
+    const c = creds(); if (!c.token || !c.gistId) return setStatus("Enter token and gist ID first.", true);
     try {
-        const res = await fetch(`https://api.github.com/gists/${creds.gistId}`, {
-            headers: {
-                "Authorization": `Bearer ${creds.token}`,
-                "Accept": "application/vnd.github+json"
-            }
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const fileContent = data.files[GIST_FILENAME]?.content;
-        if (!fileContent) throw new Error(`File ${GIST_FILENAME} not found in Gist.`);
-
-        const cloudState = JSON.parse(fileContent);
-
-        if (cloudState.lastTick && state.lastTick && cloudState.lastTick < state.lastTick - 5000) {
-            const localTime = new Date(state.lastTick).toLocaleTimeString();
-            const cloudTime = new Date(cloudState.lastTick).toLocaleTimeString();
-            if (!confirm(`Warning: Your local save is newer (${localTime}) than the cloud save (${cloudTime}). Overwrite local with cloud?`)) {
-                setSyncStatus("Pull canceled.");
-                return;
-            }
-        }
-
-        state = cloudState;
-        sanitizeState();
-        saveLocal();
-        calculateOfflineProgress();
-        renderAll();
-        setSyncStatus(`Loaded cloud save from ${new Date(state.lastTick).toLocaleTimeString()}.`);
-    } catch (err) {
-        setSyncStatus(`Pull failed: ${err.message}`, true);
-    }
+        setStatus("Fetching cloud save...");
+        const cloud = await gistGet(c);
+        if (!cloud || cloud.version !== 2) throw new Error("No v0.4 save in the gist yet. Push one first.");
+        if (S.rev > S.cloudRev && !confirm("This device has progress that hasn't been pushed. Replace it with the cloud save?")) return setStatus("Pull cancelled.");
+        S = cloud; S.cloudRev = S.rev; ensure(); advance(); saveLocal(); renderAll();
+        setStatus("Loaded cloud save.");
+    } catch (e) { setStatus("Pull failed: " + e.message, true); }
 }
 
 function bindEvents() {
-    document.getElementById("toggle-sync-btn").onclick = () => {
-        document.getElementById("sync-panel").classList.toggle("hidden");
+    $("toggle-sync-btn").onclick = () => $("sync-panel").classList.toggle("hidden");
+    $("gist-token").oninput = $("gist-id").oninput = saveCreds;
+    $("push-gist-btn").onclick = () => push(false);
+    $("pull-gist-btn").onclick = pull;
+    $("claim-land-btn").onclick = claimLand;
+    $("local-save-btn").onclick = () => { saveLocal(); log("Game saved locally."); };
+    $("hard-reset-btn").onclick = () => {
+        if (!confirm("Start a new run? This replaces the current save.")) return;
+        const t = prompt("World seed (blank for random):", "");
+        if (t === null) return;
+        startNew(t.trim() ? toSeed(t.trim()) : randSeed(), S); saveLocal(); renderAll();
     };
-
-    document.getElementById("gist-token").oninput = saveCredsAuto;
-    document.getElementById("gist-id").oninput = saveCredsAuto;
-
-    document.getElementById("push-gist-btn").onclick = () => pushToGist(false);
-    document.getElementById("pull-gist-btn").onclick = pullFromGist;
-
-    document.getElementById("local-save-btn").onclick = () => {
-        saveLocal();
-        addLog("Game saved locally.");
-    };
-    document.getElementById("hard-reset-btn").onclick = () => {
-        if (confirm("Wipe local save and restart?")) {
-            localStorage.removeItem(STORAGE_KEY);
-            location.reload();
-        }
-    };
-
-    window.addEventListener("beforeunload", () => {
-        saveLocal();
-        const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
-        if (creds.token && creds.gistId) {
-            fetch(`https://api.github.com/gists/${creds.gistId}`, {
-                method: "PATCH",
-                keepalive: true,
-                headers: {
-                    "Authorization": `Bearer ${creds.token}`,
-                    "Accept": "application/vnd.github+json",
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } }
-                })
-            }).catch(() => {});
-        }
+    window.addEventListener("pagehide", saveLocal);
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) { saveLocal(); push(true); }
+        else advance() ? renderAll() : renderDynamic();
     });
 }
 
+async function init() {
+    G = await (await fetch("gamedata.json", { cache: "no-cache" })).json();
+    G.resources.forEach(r => RES[r.id] = r);
+    document.title = G.meta.title; $("game-h1").textContent = G.meta.title;
+    S = loadLocal();
+    if (S) ensure(); else startNew(randSeed());
+    loadCredsUI(); syncUI(); bindEvents();
+    advance(); checkUnlocks(); renderAll();
+    setInterval(() => { advance() ? renderAll() : renderDynamic(); }, 1000);
+    setInterval(saveLocal, G.meta.autoSaveMs);
+}
 init();

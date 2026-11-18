@@ -3,18 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title id="game-title">Settlement</title>
-    <script>
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = 'style.css?t=' + Date.now();
-        document.head.appendChild(link);
-    </script>
+    <title>Settlement</title>
+    <!-- Bump ?v= when you change style.css or game.js; gamedata.json revalidates itself. -->
+    <link rel="stylesheet" href="style.css?v=0.4">
 </head>
 <body>
     <header>
         <div class="title-bar">
-            <h1 id="game-title">SETTLEMENT</h1>
+            <h1 id="game-h1">SETTLEMENT</h1>
             <button id="toggle-sync-btn" class="btn-subtle">⚙ Cloud Sync</button>
         </div>
         <div id="sync-panel" class="panel hidden">
@@ -25,7 +21,6 @@
                 <input type="text" id="gist-id" placeholder="Secret Gist ID">
             </div>
             <div class="button-row">
-                <button id="save-creds-btn">Save Credentials</button>
                 <button id="push-gist-btn" class="btn-primary">⬆ Push Save to Gist</button>
                 <button id="pull-gist-btn">⬇ Pull Save from Gist</button>
             </div>
@@ -34,27 +29,35 @@
     </header>
 
     <main>
-        <!-- Event Log -->
         <section id="log-panel" class="panel log-box"></section>
 
-        <!-- Resources & Manual Gathering -->
         <section class="panel">
             <h2>Stockpiles</h2>
             <div id="resources-list" class="grid-list"></div>
             <div id="manual-actions" class="button-row" style="margin-top: 12px;"></div>
         </section>
 
-        <!-- Population & Workforce -->
+        <section class="panel">
+            <div class="section-header">
+                <h2>Land</h2>
+                <span id="land-counter" class="badge">0 / 0 plots</span>
+            </div>
+            <p class="hint" id="seed-hint"></p>
+            <div id="deposits-list" class="stack-list"></div>
+            <div class="button-row" style="margin-top: 12px;">
+                <button id="claim-land-btn">Claim land</button>
+            </div>
+        </section>
+
         <section class="panel" id="pop-section">
             <div class="section-header">
                 <h2>Population</h2>
                 <span id="pop-counter" class="badge">0 / 0</span>
             </div>
-            <p class="hint">Idle Villagers: <strong id="idle-pop">0</strong> (Each villager consumes 0.5 Food/s)</p>
+            <p class="hint">Idle villagers: <strong id="idle-pop">0</strong> <span id="needs-hint"></span></p>
             <div id="jobs-list" class="stack-list"></div>
         </section>
 
-        <!-- Structures -->
         <section class="panel">
             <h2>Structures</h2>
             <div id="buildings-list" class="stack-list"></div>
@@ -63,13 +66,9 @@
 
     <footer>
         <button id="local-save-btn" class="btn-subtle">Save Local</button>
-        <button id="hard-reset-btn" class="btn-danger">Reset Run</button>
+        <button id="hard-reset-btn" class="btn-danger">New Run</button>
     </footer>
 
-    <script>
-        const script = document.createElement('script');
-        script.src = 'game.js?t=' + Date.now();
-        document.body.appendChild(script);
-    </script>
+    <script src="game.js?v=0.4"></script>
 </body>
 </html>
