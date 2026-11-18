@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settlement tech tree</title>
+    <link rel="stylesheet" href="style.css?v=0.43">
+    <style>
+        body { max-width: 1100px; }
+        #wrap { overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: #0b0d10; }
+        .legend { display: flex; flex-wrap: wrap; gap: 12px; font: 0.75rem var(--font-mono); color: var(--muted); margin: 8px 0; }
+        .legend i { display: inline-block; width: 18px; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+        .nd { cursor: pointer; } .nd text { fill: var(--text); font: 11px var(--font-mono); pointer-events: none; }
+        #info { font: 0.8rem var(--font-mono); color: var(--muted); margin-top: 10px; min-height: 3em; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="title-bar">
+            <h1>TECH TREE</h1>
+            <span><a href="index.html" class="muted">game</a> · <a href="builder.html" class="muted">builder</a></span>
+        </div>
+        <div class="button-row"><button id="draft-btn" class="btn-subtle" hidden>Show builder draft</button><span id="src" class="muted"></span></div>
+        <div class="legend">
+            <span><i style="border-color:#d97706;border-top-style:dashed"></i>unlocks</span>
+            <span><i style="border-color:#f87171"></i>build cost</span>
+            <span><i style="border-color:#34d399"></i>job input / output</span>
+            <span><i style="border-color:#8b949e;border-top-style:dotted"></i>deposit source</span>
+            <span>Tap a node to trace what leads to it and what it leads to.</span>
+        </div>
+    </header>
+    <main>
+        <div id="wrap"></div>
+        <div id="info"></div>
+    </main>
+    <script src="tree.js?v=0.43"></script>
+</body>
+</html>
