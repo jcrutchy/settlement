@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settlement data check</title>
+    <link rel="stylesheet" href="style.css?v=0.41">
+</head>
+<body>
+    <header>
+        <div class="title-bar">
+            <h1>DATA CHECK</h1>
+            <button id="recheck" class="btn-subtle">Check again</button>
+        </div>
+    </header>
+    <main>
+        <section class="panel">
+            <div class="section-header"><h2>Result</h2><span id="summary" class="badge">...</span></div>
+            <div id="results" class="stack-list"></div>
+        </section>
+    </main>
+    <script src="validate.js?v=0.41"></script>
+    <script>
+        const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+        const cls = { error: "negative", warn: "neutral", info: "positive" };
+        async function run() {
+            const box = document.getElementById("results");
+            try {
+                const G = await (await fetch("gamedata.json", { cache: "no-cache" })).json();
+                const res = validateGameData(G).sort((a, b) => ["error", "warn", "info"].indexOf(a.level) - ["error", "warn", "info"].indexOf(b.level));
+                const e = res.filter(r => r.level === "error").length, w = res.filter(r => r.level === "warn").length;
+                document.getElementById("summary").textContent = `${e} errors, ${w} warnings`;
+                box.innerHTML = res.map(r => `<div class="row-item"><span class="rate-badge ${cls[r.level]}">${r.level}</span><div class="row-info"><strong>${esc(r.where)}</strong><span>${esc(r.msg)}</span></div></div>`).join("");
+            } catch (err) {
+                document.getElementById("summary").textContent = "failed";
+                box.innerHTML = `<div class="row-item"><div class="row-info"><strong>Could not load gamedata.json</strong><span>${esc(err.message)}</span></div></div>`;
+            }
+        }
+        document.getElementById("recheck").onclick = run;
+        run();
+    </script>
+</body>
+</html>
