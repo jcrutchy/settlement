@@ -10,8 +10,6 @@ let state = {
     logs: ["A clearing in the wilderness. Gather wood to build shelter."]
 };
 
-let hasPulledThisSession = false;
-
 const STORAGE_KEY = "settlement_save_v1";
 const CREDS_KEY = "settlement_gist_creds";
 const GIST_FILENAME = "settlement_save.json";
@@ -25,8 +23,8 @@ async function init() {
     initDefaultState();
     loadLocalSave();
     loadCredsUI();
-    bindEvents();
     updateSyncUIState();
+    bindEvents();
     calculateOfflineProgress();
 
     checkUnlocks();
@@ -349,13 +347,8 @@ function updateSyncUIState() {
     if (hasCreds) {
         pullBtn.style.display = "inline-block";
         pushBtn.style.display = "inline-block";
-        // Disable push until user has pulled this session
-        pushBtn.disabled = !hasPulledThisSession;
-        if (!hasPulledThisSession) {
-            pushBtn.title = "Please Pull from cloud first before pushing.";
-        } else {
-            pushBtn.title = "";
-        }
+        pushBtn.disabled = false;
+        pushBtn.title = "";
     } else {
         pullBtn.style.display = "none";
         pushBtn.style.display = "none";
@@ -373,8 +366,33 @@ async function pushToGist(isAuto = false) {
     if (!creds.token || !creds.gistId) return;
 
     saveLocal();
-    if (!isAuto) setSyncStatus("Pushing save to Secret Gist...");
+    if (!isAuto) setSyncStatus("Checking cloud state before push...");
+    
     try {
+        const checkRes = await fetch(`https://api.github.com/gists/${creds.gistId}`, {
+            headers: {
+                "Authorization": `Bearer ${creds.token}`,
+                "Accept": "application/vnd.github+json"
+            }
+        });
+        
+        if (checkRes.ok) {
+            const data = await checkRes.json();
+            const fileContent = data.files[GIST_FILENAME]?.content;
+            if (fileContent) {
+                const cloudState = JSON.parse(fileContent);
+                if (cloudState.lastTick && cloudState.lastTick > state.lastTick + 5000 && !isAuto) {
+                    const localTime = new Date(state.lastTick).toLocaleTimeString();
+                    const cloudTime = new Date(cloudState.lastTick).toLocaleTimeString();
+                    if (!confirm(`Warning: Cloud save is newer (${cloudTime}) than this device (${localTime}). Overwrite cloud with this device's progress?`)) {
+                        setSyncStatus("Push canceled to prevent overwriting newer progress.");
+                        return;
+                    }
+                }
+            }
+        }
+
+        if (!isAuto) setSyncStatus("Pushing save to Secret Gist...");
         const res = await fetch(`https://api.github.com/gists/${creds.gistId}`, {
             method: "PATCH",
             headers: {
@@ -412,7 +430,6 @@ async function pullFromGist() {
 
         const cloudState = JSON.parse(fileContent);
 
-        // Optional clock check safety against clock skew (< 5s difference)
         if (cloudState.lastTick && state.lastTick && cloudState.lastTick < state.lastTick - 5000) {
             const localTime = new Date(state.lastTick).toLocaleTimeString();
             const cloudTime = new Date(cloudState.lastTick).toLocaleTimeString();
@@ -427,10 +444,7 @@ async function pullFromGist() {
         saveLocal();
         calculateOfflineProgress();
         renderAll();
-
-        hasPulledThisSession = true;
-        updateSyncUIState();
-        setSyncStatus(`Loaded cloud save from ${new Date(state.lastTick).toLocaleTimeString()}. Push unlocked.`);
+        setSyncStatus(`Loaded cloud save from ${new Date(state.lastTick).toLocaleTimeString()}.`);
     } catch (err) {
         setSyncStatus(`Pull failed: ${err.message}`, true);
     }
@@ -441,7 +455,6 @@ function bindEvents() {
         document.getElementById("sync-panel").classList.toggle("hidden");
     };
 
-    // Auto-save credentials on input/paste
     document.getElementById("gist-token").oninput = saveCredsAuto;
     document.getElementById("gist-id").oninput = saveCredsAuto;
 
@@ -459,28 +472,22 @@ function bindEvents() {
         }
     };
 
-    // Auto-push on window close/unload if pulled this session
     window.addEventListener("beforeunload", () => {
         saveLocal();
-        if (hasPulledThisSession) {
-            const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
-            if (creds.token && creds.gistId) {
-                // Use navigator.sendBeacon or synchronous fetch if possible, 
-                // but standard async fetch during unload can be tricky. 
-                // We'll trigger a background push attempt:
-                fetch(`https://api.github.com/gists/${creds.gistId}`, {
-                    method: "PATCH",
-                    keepalive: true,
-                    headers: {
-                        "Authorization": `Bearer ${creds.token}`,
-                        "Accept": "application/vnd.github+json",
-                        "Content-Type": "application/json"
-                    },
-                    body: JSON.stringify({
-                        files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } }
-                    })
-                }).catch(() => {});
-            }
+        const creds = JSON.parse(localStorage.getItem(CREDS_KEY) || "{}");
+        if (creds.token && creds.gistId) {
+            fetch(`https://api.github.com/gists/${creds.gistId}`, {
+                method: "PATCH",
+                keepalive: true,
+                headers: {
+                    "Authorization": `Bearer ${creds.token}`,
+                    "Accept": "application/vnd.github+json",
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    files: { [GIST_FILENAME]: { content: JSON.stringify(state, null, 2) } }
+                })
+            }).catch(() => {});
         }
     });
 }
