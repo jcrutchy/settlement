@@ -16,7 +16,7 @@ const GIST_FILENAME = "settlement_save.json";
 
 // --- INITIALIZATION ---
 async function init() {
-    const res = await fetch("gamedata.json");
+    const res = await fetch("gamedata.json?t=" + Date.now());
     gameData = await res.json();
     document.getElementById("game-title").textContent = gameData.meta.title;
 

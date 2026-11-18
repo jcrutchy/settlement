@@ -61,6 +61,10 @@
         <button id="hard-reset-btn" class="btn-danger">Reset Run</button>
     </footer>
 
-    <script src="game.js"></script>
+    <script>
+        const script = document.createElement('script');
+        script.src = 'game.js?t=' + Date.now();
+        document.body.appendChild(script);
+    </script>
 </body>
 </html>
