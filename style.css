@@ -90,6 +90,14 @@ h3 { font-size: 0.9rem; margin-bottom: 4px; }
 
 .row-info strong { display: block; font-size: 0.95rem; }
 .row-info span { font-size: 0.8rem; color: var(--muted); font-family: var(--font-mono); }
+.row-info { flex: 1 1 auto; min-width: 0; }
+.row-info span { display: block; overflow-wrap: anywhere; }
+
+/* Job -/+ controls and build buttons keep their size; the text column absorbs squeeze */
+.row-item > .button-row { flex: 0 0 auto; flex-wrap: nowrap; gap: 6px; }
+.row-item > button { flex: 0 0 auto; }
+.row-item .button-row .badge { min-width: 3.2ch; text-align: center; }
+.row-item .button-row button { min-width: 36px; padding: 8px 10px; }
 
 .button-row, .form-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .form-row input {
