@@ -3,8 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SETTLEMENT // v0.1</title>
-    <link rel="stylesheet" href="style.css">
+    <title id="game-title">Settlement</title>
+    <script>
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'style.css?t=' + Date.now();
+        document.head.appendChild(link);
+    </script>
 </head>
 <body>
     <header>

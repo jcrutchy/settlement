@@ -73,42 +73,60 @@ function sanitizeState() {
     });
 }
 
+// --- NET RATE CALCULATION ---
+function calculateNetRates() {
+    const rates = {};
+    gameData.resources.forEach(r => rates[r.id] = 0.0);
+
+    // Population consumes 0.5 food per second
+    rates['food'] -= state.population * 0.5;
+
+    // Granary bonus multiplier for food production
+    const foodMultiplier = 1 + (state.buildings.granary || 0) * 0.2;
+
+    // Job production
+    gameData.jobs.forEach(job => {
+        const count = state.jobs[job.id] || 0;
+        if (count > 0) {
+            let output = count * job.rate;
+            if (job.produces === "food") output *= foodMultiplier;
+            rates[job.produces] = (rates[job.produces] || 0) + output;
+        }
+    });
+
+    return rates;
+}
+
 // --- CORE SIMULATION LOOP ---
 function tick(deltaSeconds = 1) {
     const now = Date.now();
     state.lastTick = now;
 
-    // 1. Housing & Population Growth
-    const maxPop = getMaxHousing();
-    if (state.population < maxPop && state.resources.food >= 5) {
-        if (Math.random() < 0.15 * deltaSeconds) {
-            state.population++;
-            addLog("A new settler arrived at your camp.");
-        }
-    }
+    const rates = calculateNetRates();
 
-    // 2. Food Consumption & Starvation Check
-    const foodNeeded = state.population * 0.5 * deltaSeconds;
-    state.resources.food -= foodNeeded;
-    if (state.resources.food < 0) {
-        state.resources.food = 0;
-        if (state.population > 0 && Math.random() < 0.2) {
+    // 1. Apply net rates to resources
+    Object.entries(rates).forEach(([resId, netRate]) => {
+        state.resources[resId] = (state.resources[resId] || 0) + (netRate * deltaSeconds);
+        if (state.resources[resId] < 0) state.resources[resId] = 0;
+    });
+
+    // 2. Starvation check if food hit 0
+    if (state.resources.food <= 0 && state.population > 0) {
+        if (Math.random() < 0.2 * deltaSeconds) {
             state.population--;
             unassignExcessWorkers();
             addLog("Starvation! A settler has abandoned the camp.");
         }
     }
 
-    // 3. Worker Production
-    const foodMultiplier = 1 + (state.buildings.granary || 0) * 0.2;
-    gameData.jobs.forEach(job => {
-        const count = state.jobs[job.id] || 0;
-        if (count > 0) {
-            let output = count * job.rate * deltaSeconds;
-            if (job.produces === "food") output *= foodMultiplier;
-            state.resources[job.produces] += output;
+    // 3. Housing & Population Growth
+    const maxPop = getMaxHousing();
+    if (state.population < maxPop && state.resources.food >= 10) {
+        if (Math.random() < 0.15 * deltaSeconds) {
+            state.population++;
+            addLog("A new settler arrived at your camp.");
         }
-    });
+    }
 
     // 4. Evaluate Unlocks
     checkUnlocks();
@@ -232,8 +250,11 @@ function renderAll() {
         if (!state.unlocks.resources[r.id]) return;
         resContainer.innerHTML += `
             <div class="stat-card">
-                <span>${r.icon} ${r.name}</span>
-                <strong id="res-val-${r.id}">0</strong>
+                <div class="stat-card-content">
+                    <span>${r.icon} ${r.name}</span>
+                    <strong id="res-val-${r.id}">0</strong>
+                    <span class="rate-badge neutral" id="res-rate-${r.id}">0.0/s</span>
+                </div>
             </div>`;
         const btn = document.createElement("button");
         btn.textContent = `+ Gather ${r.name}`;
@@ -281,9 +302,19 @@ function renderAll() {
 }
 
 function renderDynamic() {
+    const rates = calculateNetRates();
+
     gameData.resources.forEach(r => {
-        const el = document.getElementById(`res-val-${r.id}`);
-        if (el) el.textContent = Math.floor(state.resources[r.id] || 0);
+        const valEl = document.getElementById(`res-val-${r.id}`);
+        const rateEl = document.getElementById(`res-rate-${r.id}`);
+        if (valEl) valEl.textContent = Math.floor(state.resources[r.id] || 0);
+        
+        if (rateEl) {
+            const net = rates[r.id] || 0;
+            const sign = net > 0 ? "+" : "";
+            rateEl.textContent = `${sign}${net.toFixed(1)}/s`;
+            rateEl.className = "rate-badge " + (net > 0 ? "positive" : net < 0 ? "negative" : "neutral");
+        }
     });
 
     document.getElementById("pop-counter").textContent = `${state.population} / ${getMaxHousing()}`;

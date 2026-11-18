@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "SETTLEMENT // v0.2 EXTENDED",
+    "title": "SETTLEMENT // v0.3",
     "tickRateMs": 1000,
     "autoSaveMs": 30000
   },
@@ -8,7 +8,9 @@
     { "id": "food", "name": "Food", "icon": "🌾", "initial": 10, "unlocked": true },
     { "id": "wood", "name": "Wood", "icon": "🪵", "initial": 0, "unlocked": true },
     { "id": "stone", "name": "Stone", "icon": "🪨", "initial": 0, "unlocked": false, "unlockReq": { "resource": "wood", "amount": 15 } },
+    { "id": "clay", "name": "Clay", "icon": "🧱", "initial": 0, "unlocked": false, "unlockReq": { "resource": "stone", "amount": 20 } },
     { "id": "planks", "name": "Planks", "icon": "📦", "initial": 0, "unlocked": false, "unlockReq": { "resource": "wood", "amount": 40 } },
+    { "id": "bricks", "name": "Bricks", "icon": "🏛️", "initial": 0, "unlocked": false, "unlockReq": { "resource": "clay", "amount": 25 } },
     { "id": "iron", "name": "Iron Ore", "icon": "⛏️", "initial": 0, "unlocked": false, "unlockReq": { "resource": "stone", "amount": 30 } },
     { "id": "coal", "name": "Coal", "icon": "⬛", "initial": 0, "unlocked": false, "unlockReq": { "resource": "iron", "amount": 10 } },
     { "id": "tools", "name": "Tools", "icon": "🛠️", "initial": 0, "unlocked": false, "unlockReq": { "resource": "iron", "amount": 25 } }
@@ -17,7 +19,9 @@
     { "id": "forager", "name": "Forager", "produces": "food", "rate": 1.2 },
     { "id": "woodcutter", "name": "Woodcutter", "produces": "wood", "rate": 0.8 },
     { "id": "miner", "name": "Miner", "produces": "stone", "rate": 0.5, "unlockReq": { "resource": "wood", "amount": 15 } },
+    { "id": "clay_digger", "name": "Clay Digger", "produces": "clay", "rate": 0.4, "unlockReq": { "resource": "stone", "amount": 20 } },
     { "id": "sawyer", "name": "Sawyer", "produces": "planks", "rate": 0.3, "unlockReq": { "resource": "wood", "amount": 40 } },
+    { "id": "brickmaker", "name": "Brickmaker", "produces": "bricks", "rate": 0.2, "unlockReq": { "resource": "clay", "amount": 20 } },
     { "id": "iron_miner", "name": "Iron Miner", "produces": "iron", "rate": 0.25, "unlockReq": { "resource": "stone", "amount": 30 } },
     { "id": "colliers", "name": "Collier", "produces": "coal", "rate": 0.4, "unlockReq": { "resource": "iron", "amount": 10 } },
     { "id": "blacksmith", "name": "Blacksmith", "produces": "tools", "rate": 0.15, "unlockReq": { "resource": "iron", "amount": 15 } }
@@ -44,16 +48,25 @@
     {
       "id": "cabin",
       "name": "Sturdy Cabin",
-      "desc": "+5 Housing Capacity (Requires Planks)",
+      "desc": "+5 Housing Capacity",
       "housing": 5,
       "baseCost": { "wood": 50, "planks": 20 },
       "costMultiplier": 1.4,
       "unlockReq": { "resource": "planks", "amount": 10 }
     },
     {
+      "id": "kiln",
+      "name": "Brick Kiln",
+      "desc": "Required for advanced masonry",
+      "housing": 0,
+      "baseCost": { "stone": 40, "clay": 30 },
+      "costMultiplier": 1.5,
+      "unlockReq": { "resource": "clay", "amount": 15 }
+    },
+    {
       "id": "foundry",
       "name": "Iron Smelter",
-      "desc": "Industrial foundation for tool production",
+      "desc": "Industrial foundation for tools",
       "housing": 0,
       "baseCost": { "stone": 60, "iron": 20 },
       "costMultiplier": 1.6,
