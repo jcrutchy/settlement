@@ -17,7 +17,7 @@
     { "id": "claypit", "name": "Clay pit", "resource": "clay", "terrain": "claybank", "perTile": 120, "variance": 0.3, "regrow": 0 }
   ],
   "resources": [
-    { "id": "food", "name": "Food", "icon": "🌾", "initial": 10, "cap": 100, "manual": true },
+    { "id": "food", "name": "Food", "icon": "🌾", "initial": 10, "cap": 100, "spoil": 0.003, "manual": true },
     { "id": "wood", "name": "Wood", "icon": "🪵", "initial": 0, "cap": 150, "manual": true },
     { "id": "stone", "name": "Stone", "icon": "🪨", "cap": 100, "requires": { "resource": "wood", "gte": 15 } },
     { "id": "clay", "name": "Clay", "icon": "🧱", "cap": 100, "requires": { "resource": "stone", "gte": 20 } },
@@ -43,9 +43,9 @@
       "effects": [ { "type": "housing", "value": 2 } ] },
     { "id": "storehouse", "name": "Storehouse", "icon": "🏬", "desc": "+100 capacity, all stockpiles; hauling depot", "cost": { "wood": 40, "stone": 10 }, "uses": 1,
       "requires": { "resource": "stone", "gte": 5 }, "effects": [ { "type": "capacity", "resource": "*", "value": 100 }, { "type": "depot", "value": 1 } ] },
-    { "id": "granary", "name": "Granary", "icon": "🏺", "desc": "+20% food output, +300 food capacity", "cost": { "wood": 30, "stone": 15 }, "uses": 1,
+    { "id": "granary", "name": "Granary", "icon": "🏺", "desc": "+300 food capacity, halves food spoilage", "cost": { "wood": 30, "stone": 15 }, "uses": 1,
       "requires": { "resource": "stone", "gte": 10 },
-      "effects": [ { "type": "outputMult", "resource": "food", "value": 0.2 }, { "type": "capacity", "resource": "food", "value": 300 } ] },
+      "effects": [ { "type": "capacity", "resource": "food", "value": 300 }, { "type": "preserve", "resource": "food", "value": 1 } ] },
     { "id": "cabin", "name": "Sturdy Cabin", "icon": "🏠", "desc": "+5 housing", "cost": { "wood": 50, "planks": 20, "tools": 1 }, "uses": 1,
       "requires": { "resource": "planks", "gte": 10 }, "effects": [ { "type": "housing", "value": 5 } ] },
     { "id": "kiln", "name": "Brick Kiln", "icon": "🔥", "desc": "Unlocks bricks and brickmakers", "cost": { "stone": 40, "clay": 30 }, "uses": 1,

@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id), DRAFT = "settlement_builder_draft";
 const SING = { resources: "resource", jobs: "job", buildings: "building", deposits: "deposit" };
 // field: [key, type, optional?, referenced list]
 const FIELDS = {
-    resources: [["id", "id"], ["name", "text"], ["icon", "text"], ["cap", "num"], ["initial", "num", 1], ["manual", "bool", 1], ["requires", "cond", 1]],
+    resources: [["id", "id"], ["name", "text"], ["icon", "text"], ["cap", "num"], ["initial", "num", 1], ["spoil", "num", 1], ["manual", "bool", 1], ["requires", "cond", 1]],
     jobs: [["id", "id"], ["name", "text"], ["outputs", "map", 0, "resources"], ["inputs", "map", 1, "resources"], ["deposit", "ref", 1, "deposits"], ["requires", "cond", 1]],
     buildings: [["id", "id"], ["name", "text"], ["icon", "text"], ["desc", "text", 1], ["cost", "map", 0, "resources"], ["uses", "num"], ["growth", "growth", 1], ["effects", "effects"], ["requires", "cond", 1]],
     deposits: [["id", "id"], ["name", "text"], ["resource", "ref", 0, "resources"], ["terrain", "terr"], ["perTile", "num"], ["variance", "num"], ["regrow", "num"]]
@@ -82,7 +82,7 @@ function effectsEd(obj) { // housing / capacity / outputMult
     const box = h("div"), arr = obj.effects = obj.effects || [];
     const fix = e => { if (e.type === "housing" || e.type === "depot") delete e.resource; else if (!e.resource) e.resource = e.type === "capacity" ? "*" : ids("resources")[0] || ""; };
     const draw = () => box.replaceChildren(...arr.map((e, i) => h("div", { class: "ed-row" },
-        sel(["housing", "capacity", "outputMult", "depot"], e.type, v => { e.type = v; fix(e); changed(); draw(); }),
+        sel(["housing", "capacity", "outputMult", "preserve", "depot"], e.type, v => { e.type = v; fix(e); changed(); draw(); }),
         e.type === "housing" || e.type === "depot" ? null : sel(e.type === "capacity" ? ["*", ...ids("resources")] : ids("resources"), e.resource, v => { e.resource = v; changed(); }),
         numIn(e.value, v => { e.value = v ?? 0; changed(); }),
         h("button", { onclick: () => { arr.splice(i, 1); changed(); draw(); } }, "✕"))),

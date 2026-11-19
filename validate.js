@@ -50,6 +50,7 @@
             if (!isNum(r.cap, 1)) err(w, "cap must be a number >= 1");
             if (!r.icon) warn(w, "missing icon");
             if (r.initial !== undefined && !isNum(r.initial)) err(w, "initial must be a number");
+            if (r.spoil !== undefined && (!isNum(r.spoil) || r.spoil >= 1)) err(w, "spoil must be a number from 0 to 1 (fraction lost per second)");
             walk(r.requires, w);
         });
 
@@ -89,11 +90,11 @@
             b.effects.forEach(e => {
                 if (!isNum(e.value, 1e-12)) err(w, "effect value must be a positive number");
                 if (e.type === "housing" || e.type === "depot") return;
-                if (e.type === "capacity" || e.type === "outputMult") {
+                if (e.type === "capacity" || e.type === "outputMult" || e.type === "preserve") {
                     if (e.type === "capacity" && e.resource === "*") { (capGivers["*"] = capGivers["*"] || []).push(b.id); return; }
                     if (!hasRes(e.resource)) err(w, `${e.type} effect references unknown resource "${e.resource}"`);
                     else if (e.type === "capacity") (capGivers[e.resource] = capGivers[e.resource] || []).push(b.id);
-                } else err(w, `unknown effect type "${e.type}" (housing, capacity, outputMult, depot)`);
+                } else err(w, `unknown effect type "${e.type}" (housing, capacity, outputMult, preserve, depot)`);
             });
         });
 

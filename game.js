@@ -125,6 +125,7 @@ function flows(dt) { // production/consumption per second for the next dt second
     const R = {}, harvest = {};
     G.resources.forEach(r => R[r.id] = { p: 0, c: 0 });
     for (const k in G.pop.needs) R[k].c += S.pop * G.pop.needs[k];
+    G.resources.forEach(r => { if (r.spoil) R[r.id].c += S.res[r.id] * r.spoil / (1 + eff("preserve", r.id)); }); // stock rots; preserve effects slow it
     G.jobs.forEach(j => {
         const n = S.jobs[j.id]; if (!n) return;
         let e = 1; // efficiency: limited by input stock
@@ -190,21 +191,57 @@ function adjustJob(id, delta) {
     if (delta > 0 && getIdle() > 0) S.jobs[id]++; else if (delta < 0 && S.jobs[id] > 0) S.jobs[id]--; else return;
     S.rev++; renderDynamic();
 }
-function build(id) { // enters placing mode; tapping an owned empty tile commits
-    const b = G.buildings.find(x => x.id === id);
-    if (placing === id) { placing = null; return renderMap(); }
-    if (!afford(costOf(b)) || !freeTiles()) return;
-    placing = id; selTile = null; renderMap();
+const frac = (c, f, up) => { const o = {}; for (const k in c) o[k] = up ? Math.ceil(c[k] * f) : Math.floor(c[k] * f); return o; };
+const moveCost = b => frac(scaled(b.cost, b.growth || {}, S.bld[b.id] - 1), 0.25, true);
+
+function bestTile(bid) { // depots go where hauling improves most; everything else hugs the town centre
+    const cand = []; S.map.forEach((t, i) => { if (t.own && !t.b) cand.push(i); });
+    if (!cand.length) return -1;
+    const n = G.map.size, c = (n >> 1) * n + (n >> 1), b = G.buildings.find(x => x.id === bid), depot = b.effects.some(e => e.type === "depot");
+    const workers = d => G.jobs.reduce((w, j) => w + (j.deposit === d.id ? S.jobs[j.id] : 0), 0);
+    const score = i => {
+        if (!depot) return -dist(i, c);
+        S.map[i].b = bid; hCache = null;
+        const v = G.deposits.reduce((a, d) => a + haul(d.id).eff * (1 + workers(d)), 0);
+        S.map[i].b = null; hCache = null;
+        return v - dist(i, c) * 1e-3;
+    };
+    let best = cand[0], top = -Infinity;
+    cand.forEach(i => { const v = score(i); if (v > top) { top = v; best = i; } });
+    return best;
 }
-function tapTile(i) {
+
+function build(id) { // auto-places on the best free tile
+    const b = G.buildings.find(x => x.id === id), c = costOf(b), i = bestTile(id);
+    if (i < 0 || !afford(c)) return;
+    const n = G.map.size;
+    spend(c); S.map[i].b = id; S.bld[id]++; S.rev++; hCache = null; selTile = i; placing = null;
+    log(`Built ${b.name} (${S.bld[id]}) at ${i % n},${Math.floor(i / n)}.`); checkUnlocks(); renderAll();
+}
+function tapTile(i) { // placing = index of the tile whose building is being moved
     const t = S.map[i];
-    if (placing && t.own && !t.b) {
-        const b = G.buildings.find(x => x.id === placing), c = costOf(b);
+    if (placing !== null && t.own && !t.b) {
+        const src = S.map[placing], b = G.buildings.find(x => x.id === src.b), c = moveCost(b);
         if (!afford(c)) { placing = null; return renderMap(); }
-        spend(c); t.b = b.id; S.bld[b.id]++; S.rev++; hCache = null; placing = null;
-        log(`Built ${b.name} (${S.bld[b.id]}).`); checkUnlocks(); return renderAll();
+        spend(c); t.b = src.b; src.b = null; S.rev++; hCache = null; placing = null; selTile = i;
+        log(`Moved ${b.name}.`); return renderAll();
     }
     placing = null; selTile = selTile === i ? null : i; renderMap(); renderDynamic();
+}
+function startMove() {
+    const t = S.map[selTile];
+    if (selTile === null || !t.b || t.b === "center" || !freeTiles()) return;
+    if (!afford(moveCost(G.buildings.find(x => x.id === t.b)))) return;
+    placing = selTile; renderMap();
+}
+function demolish() {
+    const t = S.map[selTile];
+    if (selTile === null || !t.b || t.b === "center") return;
+    const b = G.buildings.find(x => x.id === t.b), refund = frac(scaled(b.cost, b.growth || {}, S.bld[b.id] - 1), 0.5);
+    if (!confirm(`Demolish ${b.name}? You get back ${costStr(refund) || "nothing"}.`)) return;
+    for (const k in refund) S.res[k] = Math.min(capOf(k), S.res[k] + refund[k]);
+    t.b = null; S.bld[b.id]--; S.rev++; hCache = null; placing = null;
+    log(`Demolished ${b.name}.`); checkUnlocks(); renderAll();
 }
 function claimTile() {
     const c = claimCost();
@@ -238,24 +275,30 @@ function renderAll() {
 }
 
 function renderMap() {
-    const M = G.map, icon = {}, cb = $("claim-tile-btn");
+    const M = G.map, icon = {}, cb = $("claim-tile-btn"), mb = $("move-btn"), db = $("demolish-btn");
     M.terrain.forEach(t => icon[t.id] = t.icon);
+    const bOf = id => G.buildings.find(x => x.id === id), mv = placing !== null;
     const el = $("map"); el.style.gridTemplateColumns = `repeat(${M.size}, 1fr)`;
     el.replaceChildren(...S.map.map((t, i) => {
         const e = document.createElement("button");
-        e.className = "tile" + (t.own ? " own" : claimable(i) ? " near" : "") + (selTile === i ? " sel" : "") + (placing && t.own && !t.b ? " target" : "");
-        e.textContent = t.b === "center" ? M.centerIcon : t.b ? (G.buildings.find(x => x.id === t.b).icon || "🏗️") : icon[t.t];
+        e.className = "tile" + (t.own ? " own" : claimable(i) ? " near" : "") + (selTile === i ? " sel" : "") + (mv && t.own && !t.b ? " target" : "");
+        if (t.b) { // building on top, terrain/deposit icon kept small in the corner
+            e.textContent = t.b === "center" ? M.centerIcon : bOf(t.b).icon || "🏗️";
+            const sub = document.createElement("span"); sub.className = "sub"; sub.textContent = icon[t.t]; e.append(sub);
+        } else e.textContent = icon[t.t];
         e.onclick = () => tapTile(i); return e;
     }));
-    const t = S.map[selTile];
-    let msg = placing ? `Tap one of your empty tiles to build ${G.buildings.find(x => x.id === placing).name}.` : "Tap a tile to inspect it; claim tiles next to your land.";
-    if (!placing && t) {
+    const t = S.map[selTile], canEdit = !mv && t && t.own && t.b && t.b !== "center";
+    let msg = mv ? `Tap one of your empty tiles to move ${bOf(S.map[placing].b).name} (costs ${costStr(moveCost(bOf(S.map[placing].b)))}).` : "Tap a tile to inspect it; claim tiles next to your land.";
+    if (!mv && t) {
         const d = G.deposits.find(x => x.terrain === t.t);
-        msg = `${t.t}${d ? ` · ${tileCap(d, t)} ${d.resource}` : ""} · ${t.own ? (t.b ? (t.b === "center" ? "town centre" : G.buildings.find(x => x.id === t.b).name) : "yours, empty") : claimable(selTile) ? "next to your land" : "out of reach"}`;
+        msg = `${t.t}${d ? ` · ${tileCap(d, t)} ${d.resource}` : ""} · ${t.own ? (t.b ? (t.b === "center" ? "town centre" : bOf(t.b).name) : "yours, empty") : claimable(selTile) ? "next to your land" : "out of reach"}`;
     }
     $("tile-info").textContent = msg;
-    cb.style.display = !placing && t && claimable(selTile) ? "" : "none";
+    cb.style.display = !mv && t && claimable(selTile) ? "" : "none";
     cb.textContent = `Claim (${costStr(claimCost())})`;
+    mb.style.display = db.style.display = canEdit ? "" : "none";
+    if (canEdit) mb.textContent = `Move (${costStr(moveCost(bOf(t.b)))})`;
 }
 
 function renderDynamic() {
@@ -271,7 +314,7 @@ function renderDynamic() {
     G.deposits.forEach(d => { const s = S.dep[d.id], hl = haul(d.id); set("dep-" + d.id, `${Math.floor(s.amt)} / ${s.cap} ${d.resource} (${d.regrow ? "regrows" : "finite"}) · hauling ${Math.round(hl.eff * 100)}%, avg ${hl.avg.toFixed(1)} tiles`); });
     const free = freeTiles();
     set("land-counter", `${S.map.filter(t => t.own).length} tiles owned · ${free} free`);
-    set("seed-hint", `World seed ${S.seed}. Claim tiles next to your land (pricier as you grow) and build on them. Depots near deposits cut hauling loss.`);
+    set("seed-hint", `World seed ${S.seed}. Claim tiles next to your land (pricier as you grow) and build on them. Structures are placed automatically; select one on the map to move or demolish it. Depots near deposits cut hauling loss.`);
     $("claim-tile-btn").disabled = selTile === null || !afford(claimCost());
     set("pop-counter", `${S.pop} / ${housing()}`);
     set("idle-pop", getIdle());
@@ -281,7 +324,7 @@ function renderDynamic() {
         const c = costOf(b);
         set("bld-name-" + b.id, `${b.name} (${S.bld[b.id]})`);
         set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)}`);
-        const btn = $("bld-btn-" + b.id); if (btn) { btn.disabled = !(afford(c) && free) && placing !== b.id; btn.textContent = placing === b.id ? "Cancel" : "Place"; }
+        const btn = $("bld-btn-" + b.id); if (btn) btn.disabled = !(afford(c) && free);
     });
 }
 
@@ -351,6 +394,7 @@ function bindEvents() {
     $("push-gist-btn").onclick = () => push(false);
     $("pull-gist-btn").onclick = pull;
     $("claim-tile-btn").onclick = claimTile;
+    $("move-btn").onclick = startMove; $("demolish-btn").onclick = demolish;
     $("local-save-btn").onclick = () => { saveLocal(); log("Game saved locally."); };
     $("hard-reset-btn").onclick = () => {
         if (!confirm("Start a new run? This replaces the current save.")) return;
