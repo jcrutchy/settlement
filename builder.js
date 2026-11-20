@@ -4,8 +4,8 @@ const SING = { resources: "resource", jobs: "job", buildings: "building", deposi
 // field: [key, type, optional?, referenced list]
 const FIELDS = {
     resources: [["id", "id"], ["name", "text"], ["icon", "text"], ["cap", "num"], ["initial", "num", 1], ["spoil", "num", 1], ["manual", "bool", 1], ["requires", "cond", 1]],
-    jobs: [["id", "id"], ["name", "text"], ["outputs", "map", 0, "resources"], ["inputs", "map", 1, "resources"], ["deposit", "ref", 1, "deposits"], ["requires", "cond", 1]],
-    buildings: [["id", "id"], ["name", "text"], ["icon", "text"], ["desc", "text", 1], ["cost", "map", 0, "resources"], ["uses", "num"], ["growth", "growth", 1], ["effects", "effects"], ["requires", "cond", 1]],
+    jobs: [["id", "id"], ["name", "text"], ["outputs", "map", 0, "resources"], ["inputs", "map", 1, "resources"], ["deposit", "ref", 1, "deposits"], ["slots", "slots", 1], ["requires", "cond", 1]],
+    buildings: [["id", "id"], ["name", "text"], ["icon", "text"], ["desc", "text", 1], ["cost", "map", 0, "resources"], ["uses", "num"], ["growth", "growth", 1], ["terrain", "csv", 1], ["effects", "effects"], ["requires", "cond", 1]],
     deposits: [["id", "id"], ["name", "text"], ["resource", "ref", 0, "resources"], ["terrain", "terr"], ["perTile", "num"], ["variance", "num"], ["regrow", "num"]]
 };
 const NEW = {
@@ -90,6 +90,15 @@ function effectsEd(obj) { // housing / capacity / outputMult
     draw(); return box;
 }
 
+function slotsEd(obj) { // job needs worker slots provided by a building
+    const g = obj.slots ? { ...obj.slots } : { building: ids("buildings")[0] || "", per: 1 }, row = h("div", { class: "ed-row" });
+    const commit = () => { obj.slots = { building: g.building, per: g.per }; changed(); };
+    const draw = () => row.replaceChildren(...(obj.slots
+        ? [sel(ids("buildings"), g.building, v => { g.building = v; commit(); }), "×", numIn(g.per, v => { g.per = v ?? 1; commit(); }), "workers each", h("button", { onclick: () => { delete obj.slots; changed(); draw(); } }, "✕")]
+        : [h("button", { class: "btn-subtle", onclick: () => { commit(); draw(); } }, "+ require building slots")]));
+    draw(); return row;
+}
+
 function widget(sec, obj, [key, type, opt, list]) {
     const upd = v => { setVal(obj, key, v); changed(); };
     switch (type) {
@@ -101,6 +110,8 @@ function widget(sec, obj, [key, type, opt, list]) {
         case "map": return mapEd(obj, key, list, opt);
         case "cond": return condEd(obj);
         case "growth": return growthEd(obj, opt);
+        case "slots": return slotsEd(obj);
+        case "csv": return h("input", { type: "text", value: (obj[key] || []).join(", "), oninput: e => { const a = e.target.value.split(",").map(x => x.trim()).filter(Boolean); setVal(obj, key, a.length ? a : undefined); changed(); } });
         case "terr": return sel(((D.map && D.map.terrain) || []).map(t => t.id), obj[key] ?? "", upd);
         case "effects": return effectsEd(obj);
     }

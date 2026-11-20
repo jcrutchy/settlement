@@ -1,0 +1,75 @@
+<!-- Game markup, injected into index.html at load so UI changes ship together with game.js -->
+<header>
+    <div class="title-bar">
+        <h1 id="game-h1">SETTLEMENT</h1>
+        <span><a href="stats.html" class="muted">stats</a> · <a href="tree.html" class="muted">tech tree</a></span>
+        <button id="toggle-sync-btn" class="btn-subtle">⚙ Cloud Sync</button>
+    </div>
+    <div id="sync-panel" class="panel hidden">
+        <h3>GitHub Secret Gist Sync</h3>
+        <p class="hint">Stored locally in your browser only. Never committed to Git.</p>
+        <div class="form-row">
+            <input type="password" id="gist-token" placeholder="Fine-Grained PAT (Gist Read/Write)">
+            <input type="text" id="gist-id" placeholder="Secret Gist ID">
+        </div>
+        <div class="button-row">
+            <button id="push-gist-btn" class="btn-primary">⬆ Push Save to Gist</button>
+            <button id="pull-gist-btn">⬇ Pull Save from Gist</button>
+        </div>
+        <div id="sync-status" class="status-text"></div>
+    </div>
+</header>
+
+<main>
+    <div id="alert" class="alert" style="display:none;"></div>
+    <section id="log-panel" class="panel log-box"></section>
+
+    <section class="panel">
+        <h2>Stockpiles</h2>
+        <div id="resources-list" class="grid-list"></div>
+        <div id="manual-actions" class="button-row" style="margin-top: 12px;"></div>
+    </section>
+
+    <section class="panel">
+        <div class="section-header">
+            <h2>Land</h2>
+            <span id="land-counter" class="badge">0 / 0 plots</span>
+        </div>
+        <p class="hint" id="seed-hint"></p>
+        <div id="map" class="map"></div>
+        <div class="button-row" style="margin: 10px 0; align-items: center;">
+            <button id="claim-tile-btn" style="display:none;">Claim tile</button>
+            <button id="move-btn" style="display:none;">Move</button>
+            <button id="demolish-btn" class="btn-danger" style="display:none;">Demolish</button>
+            <span id="tile-info" class="hint" style="margin: 0;"></span>
+        </div>
+        <div id="deposits-list" class="stack-list"></div>
+    </section>
+
+    <section class="panel" id="pop-section">
+        <div class="section-header">
+            <h2>Population</h2>
+            <span id="pop-counter" class="badge">0 / 0</span>
+        </div>
+        <p class="hint">Idle villagers: <strong id="idle-pop">0</strong> <span id="needs-hint"></span></p>
+        <div id="jobs-list" class="stack-list"></div>
+    </section>
+
+    <section class="panel">
+        <h2>Next unlocks</h2>
+        <div id="goals" class="stack-list"></div>
+    </section>
+
+    <section class="panel">
+        <h2>Structures</h2>
+        <div id="buildings-list" class="stack-list"></div>
+    </section>
+</main>
+
+<footer>
+    <button id="local-save-btn" class="btn-subtle">Save Local</button>
+    <input id="seed-in" type="text" placeholder="seed (optional)" style="flex:1;margin:0 10px;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font:0.8rem var(--font-mono);">
+    <button id="hard-reset-btn" class="btn-danger">New Run</button>
+</footer>
+
+

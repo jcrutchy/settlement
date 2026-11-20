@@ -32,6 +32,7 @@ function build() {
             Object.keys(x.inputs || {}).forEach(k => edge("R:" + k, n.key, "flow"));
             Object.keys(x.outputs || {}).forEach(k => edge(n.key, "R:" + k, "flow"));
             if (x.deposit) edge("D:" + x.deposit, n.key, "source");
+            if (x.slots) edge("B:" + x.slots.building, n.key, "unlock");
         }
     });
     const cap = Object.keys(N).length; // depth = longest path; capped so cycles can't loop forever

@@ -1,5 +1,5 @@
 "use strict";
-let G, S, RES = {}, quiet = false, hCache = null, placing = null, selTile = null;
+let G, S, RES = {}, DEP = {}, quiet = false, hCache = null, placing = null, selTile = null, popFloor = 0, armedBtn = null, armTimer = null;
 const KEY = "settlement_save_v2", CREDS = "settlement_gist_creds", FILE = "settlement_save.json";
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -10,6 +10,16 @@ const toSeed = t => /^\d+$/.test(t) ? (+t) >>> 0 : [...t].reduce((a, ch) => Math
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(Math.floor(n));
 const costStr = c => Object.entries(c).map(([k, v]) => `${v} ${k}`).join(", ");
 const ioStr = o => Object.entries(o || {}).map(([k, v]) => `${v}/s ${k}`).join(" + ");
+const dur = t => t >= 3600 ? (t / 3600).toFixed(1) + "h" : t >= 60 ? Math.round(t / 60) + "m" : Math.round(t) + "s";
+const jobText = j => (j.inputs ? ioStr(j.inputs) + " → " : "") + ioStr(j.outputs)
+    + (j.slots ? ` · needs ${G.buildings.find(b => b.id === j.slots.building).name} (${j.slots.per} workers each)` : "")
+    + (j.deposit && S.dep[j.deposit].cap <= 0 ? ` · you own no ${DEP[j.deposit].terrain} tiles yet` : "");
+function armed(btn, label, fn) { // two-tap confirm that works on phones (no native dialogs)
+    if (armedBtn === btn) { clearTimeout(armTimer); armedBtn = null; btn.textContent = btn.dataset.orig; return fn(); }
+    if (armedBtn) armedBtn.textContent = armedBtn.dataset.orig;
+    armedBtn = btn; btn.dataset.orig = btn.dataset.orig || btn.textContent; btn.textContent = label;
+    clearTimeout(armTimer); armTimer = setTimeout(() => { armedBtn = null; btn.textContent = btn.dataset.orig; }, 4000);
+}
 
 // Seeded PRNG (mulberry32): same seed -> same world on every device
 function rng(seed) {
@@ -38,14 +48,16 @@ function newState(seed, prev) {
     return s;
 }
 
-function ensure() { // fills in anything new in gamedata.json
+function ensure() { // fills in anything new in gamedata.json, and repairs NaN left by older versions
+    G.resources.forEach(r => { if (S.res[r.id] !== undefined && !Number.isFinite(S.res[r.id])) S.res[r.id] = r.initial || 0; });
+    G.deposits.forEach(d => { const p = S.dep[d.id]; if (p && !(Number.isFinite(p.amt) && Number.isFinite(p.cap))) { const k = poolCap(S, d); S.dep[d.id] = { cap: k, amt: k }; } });
     G.resources.forEach(r => { if (S.res[r.id] === undefined) S.res[r.id] = r.initial || 0; });
     G.jobs.forEach(j => { if (S.jobs[j.id] === undefined) S.jobs[j.id] = 0; });
     G.buildings.forEach(b => { if (S.bld[b.id] === undefined) S.bld[b.id] = 0; });
     G.deposits.forEach(d => { if (!S.dep[d.id]) { const k = poolCap(S, d); S.dep[d.id] = { cap: k, amt: k }; } });
 }
 
-function startNew(seed, prev) { S = newState(seed, prev); hCache = placing = selTile = null; ensure(); checkUnlocks(true); }
+function startNew(seed, prev) { H = null; try { localStorage.removeItem(HKEY); } catch (e) { /* ignore */ } S = newState(seed, prev); hCache = placing = selTile = null; ensure(); checkUnlocks(true); }
 
 // --- DATA-DRIVEN RULES ---
 function met(c) {
@@ -87,6 +99,7 @@ const poolCap = (st, d) => st.map.reduce((a, t) => a + (t.own && t.t === d.terra
 const dist = (i, j) => { const n = G.map.size; return Math.abs((i % n) - (j % n)) + Math.abs(Math.floor(i / n) - Math.floor(j / n)); };
 const isDepot = bid => bid === "center" || (!!bid && G.buildings.find(b => b.id === bid).effects.some(e => e.type === "depot"));
 const freeTiles = () => S.map.filter(t => t.own && !t.b).length;
+const canPlace = b => S.map.some(t => t.own && !t.b && (!b.terrain || b.terrain.includes(t.t)));
 const claimable = i => !S.map[i].own && around(i, 1).some(j => S.map[j].own && dist(i, j) === 1);
 function around(c, r, exact) { // tiles within Chebyshev distance r of c (exactly r when exact)
     const n = G.map.size, out = [], cx = c % n, cy = Math.floor(c / n);
@@ -111,6 +124,10 @@ function haul(id) { // delivery efficiency: mean distance from owned deposit til
     return hCache[id];
 }
 const getIdle = () => Math.max(0, S.pop - sum(S.jobs));
+const slotCap = j => j.slots ? S.bld[j.slots.building] * j.slots.per : Infinity;
+const have = c => c.resource !== undefined ? S.res[c.resource] : S.bld[c.building];
+const prog = c => !c ? 1 : c.all ? Math.min(...c.all.map(prog)) : c.any ? Math.max(...c.any.map(prog)) : Math.min(1, have(c) / c.gte);
+const needText = c => c.all ? c.all.map(needText).join(", ") : c.any ? c.any.map(needText).join(" or ") : `${c.resource ?? c.building} ${fmt(have(c))}/${c.gte}`;
 const scaled = (cost, g, n) => {
     const m = g.type === "exp" ? Math.pow(g.rate, n) : g.type === "linear" ? 1 + g.rate * n : 1;
     const c = {}; for (const k in cost) c[k] = Math.ceil(cost[k] * m); return c;
@@ -135,7 +152,7 @@ function flows(dt) { // production/consumption per second for the next dt second
         for (const k in j.outputs) {
             let o = n * j.outputs[k] * e * (1 + eff("outputMult", k));
             let kept = 1;
-            if (d) { o = d.cap > 0 ? Math.min(o * d.amt / d.cap, d.amt / dt) : 0; harvest[j.deposit] = (harvest[j.deposit] || 0) + o; kept = haul(j.deposit).eff; }
+            if (d) { const dens = DEP[j.deposit].regrow ? (d.cap > 0 ? d.amt / d.cap : 0) : (d.amt > 0 ? 1 : 0); o = d.cap > 0 ? Math.min(o * dens, d.amt / dt) : 0; harvest[j.deposit] = (harvest[j.deposit] || 0) + o; kept = haul(j.deposit).eff; }
             R[k].p += o * kept;
         }
         for (const k in j.inputs || {}) R[k].c += n * j.inputs[k] * e;
@@ -144,8 +161,11 @@ function flows(dt) { // production/consumption per second for the next dt second
 }
 
 function trimJobs() {
-    let over = sum(S.jobs) - S.pop;
-    for (const k of Object.keys(S.jobs)) while (over > 0 && S.jobs[k] > 0) { S.jobs[k]--; over--; }
+    for (let over = sum(S.jobs) - S.pop; over > 0; over--) {
+        const k = Object.keys(S.jobs).reduce((a, b) => S.jobs[b] > S.jobs[a] ? b : a);
+        if (!S.jobs[k]) break;
+        S.jobs[k]--;
+    }
 }
 
 function step(dt) {
@@ -153,11 +173,11 @@ function step(dt) {
     G.resources.forEach(r => { const x = R[r.id]; S.res[r.id] = Math.max(0, Math.min(S.res[r.id] + (x.p - x.c) * dt, capOf(r.id))); });
     G.deposits.forEach(d => { // logistic regrowth; tiny floor so a depleted deposit can recover
         const s = S.dep[d.id], seed = Math.max(s.amt, 0.02 * s.cap);
-        s.amt = Math.max(0, Math.min(s.cap, s.amt - (harvest[d.id] || 0) * dt + d.regrow * seed * (1 - s.amt / s.cap) * dt));
+        s.amt = Math.max(0, Math.min(s.cap, s.amt - (harvest[d.id] || 0) * dt + (s.cap > 0 ? d.regrow * seed * (1 - s.amt / s.cap) * dt : 0)));
     });
     if (S.res.food <= 0 && S.pop > 0) { // deterministic: progress accumulates, no dice
         S.starve += G.pop.starveRate * dt;
-        if (S.starve >= 1) { S.starve -= 1; S.pop--; trimJobs(); log("Starvation! A settler has left the camp.", true); }
+        if (S.starve >= 1) { S.starve -= 1; if (S.pop > popFloor) { S.pop--; trimJobs(); log("Starvation! A settler has left the camp.", true); } }
     } else {
         S.starve = 0;
         if (S.pop < housing() && S.res.food >= G.pop.growthFoodMin) {
@@ -173,7 +193,7 @@ function advance() { // simulate real elapsed time since lastTick, in chunks
     if (total <= 0) return false;
     const away = total > 10, st = away ? G.meta.offlineStepSec : G.meta.liveStepSec, p0 = S.pop;
     let left = total;
-    quiet = away;
+    quiet = away; popFloor = away ? Math.ceil(S.pop * 0.75) : 0; // away: at most a quarter can starve
     while (left > 0) { const dt = Math.min(st, left); step(dt); left -= dt; }
     quiet = false;
     if (away) log(`Welcome back. Simulated ${Math.round(total / 60)} min away; population ${S.pop >= p0 ? "+" : ""}${S.pop - p0}.`);
@@ -188,16 +208,18 @@ function gather(id) {
     S.rev++; checkUnlocks(); renderDynamic();
 }
 function adjustJob(id, delta) {
-    if (delta > 0 && getIdle() > 0) S.jobs[id]++; else if (delta < 0 && S.jobs[id] > 0) S.jobs[id]--; else return;
+    const j = G.jobs.find(x => x.id === id);
+    if (delta > 0 && getIdle() > 0 && S.jobs[id] < slotCap(j)) S.jobs[id]++; else if (delta < 0 && S.jobs[id] > 0) S.jobs[id]--; else return;
     S.rev++; renderDynamic();
 }
 const frac = (c, f, up) => { const o = {}; for (const k in c) o[k] = up ? Math.ceil(c[k] * f) : Math.floor(c[k] * f); return o; };
 const moveCost = b => frac(scaled(b.cost, b.growth || {}, S.bld[b.id] - 1), 0.25, true);
 
 function bestTile(bid) { // depots go where hauling improves most; everything else hugs the town centre
-    const cand = []; S.map.forEach((t, i) => { if (t.own && !t.b) cand.push(i); });
+    const b = G.buildings.find(x => x.id === bid), cand = [];
+    S.map.forEach((t, i) => { if (t.own && !t.b && (!b.terrain || b.terrain.includes(t.t))) cand.push(i); });
     if (!cand.length) return -1;
-    const n = G.map.size, c = (n >> 1) * n + (n >> 1), b = G.buildings.find(x => x.id === bid), depot = b.effects.some(e => e.type === "depot");
+    const n = G.map.size, c = (n >> 1) * n + (n >> 1), depot = b.effects.some(e => e.type === "depot");
     const workers = d => G.jobs.reduce((w, j) => w + (j.deposit === d.id ? S.jobs[j.id] : 0), 0);
     const score = i => {
         if (!depot) return -dist(i, c);
@@ -213,7 +235,8 @@ function bestTile(bid) { // depots go where hauling improves most; everything el
 
 function build(id) { // auto-places on the best free tile
     const b = G.buildings.find(x => x.id === id), c = costOf(b), i = bestTile(id);
-    if (i < 0 || !afford(c)) return;
+    if (i < 0) return log(`No free tile suits ${b.name}${b.terrain ? " (needs " + b.terrain.join("/") + ")" : ""}.`);
+    if (!afford(c)) return;
     const n = G.map.size;
     spend(c); S.map[i].b = id; S.bld[id]++; S.rev++; hCache = null; selTile = i; placing = null;
     log(`Built ${b.name} (${S.bld[id]}) at ${i % n},${Math.floor(i / n)}.`); checkUnlocks(); renderAll();
@@ -222,6 +245,7 @@ function tapTile(i) { // placing = index of the tile whose building is being mov
     const t = S.map[i];
     if (placing !== null && t.own && !t.b) {
         const src = S.map[placing], b = G.buildings.find(x => x.id === src.b), c = moveCost(b);
+        if (b.terrain && !b.terrain.includes(t.t)) { renderMap(); $("tile-info").textContent = `${b.name} needs ${b.terrain.join("/")} tiles.`; return; }
         if (!afford(c)) { placing = null; return renderMap(); }
         spend(c); t.b = src.b; src.b = null; S.rev++; hCache = null; placing = null; selTile = i;
         log(`Moved ${b.name}.`); return renderAll();
@@ -238,9 +262,9 @@ function demolish() {
     const t = S.map[selTile];
     if (selTile === null || !t.b || t.b === "center") return;
     const b = G.buildings.find(x => x.id === t.b), refund = frac(scaled(b.cost, b.growth || {}, S.bld[b.id] - 1), 0.5);
-    if (!confirm(`Demolish ${b.name}? You get back ${costStr(refund) || "nothing"}.`)) return;
     for (const k in refund) S.res[k] = Math.min(capOf(k), S.res[k] + refund[k]);
     t.b = null; S.bld[b.id]--; S.rev++; hCache = null; placing = null;
+    G.jobs.forEach(j => { if (S.jobs[j.id] > slotCap(j)) S.jobs[j.id] = slotCap(j); }); // workers lose their slots
     log(`Demolished ${b.name}.`); checkUnlocks(); renderAll();
 }
 function claimTile() {
@@ -269,7 +293,7 @@ function renderAll() {
     $("resources-list").innerHTML = rs.map(r => `<div class="stat-card"><div class="stat-card-content"><span>${r.icon} ${r.name}</span><strong id="res-val-${r.id}">0</strong><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;"><span class="rate-badge positive" style="${badge}" id="res-prod-${r.id}"></span><span class="rate-badge negative" style="${badge}" id="res-cons-${r.id}"></span><span class="rate-badge neutral" style="${badge}" id="res-net-${r.id}"></span></div></div></div>`).join("");
     $("manual-actions").innerHTML = rs.filter(r => r.manual).map(r => `<button onclick="gather('${r.id}')">+ Gather ${r.name}</button>`).join("");
     $("deposits-list").innerHTML = G.deposits.map(d => `<div class="row-item"><div class="row-info"><strong>${d.name}</strong><span id="dep-${d.id}"></span></div></div>`).join("");
-    $("jobs-list").innerHTML = G.jobs.filter(j => S.unlocked["job:" + j.id]).map(j => `<div class="row-item"><div class="row-info"><strong>${j.name}</strong><span>${j.inputs ? ioStr(j.inputs) + " → " : ""}${ioStr(j.outputs)}</span></div><div class="button-row" style="align-items:center;"><button onclick="adjustJob('${j.id}',-1)">-</button><span class="badge" id="job-val-${j.id}">0</span><button id="job-add-${j.id}" onclick="adjustJob('${j.id}',1)">+</button></div></div>`).join("");
+    $("jobs-list").innerHTML = G.jobs.filter(j => S.unlocked["job:" + j.id]).map(j => `<div class="row-item"><div class="row-info"><strong>${j.name}</strong><span id="job-info-${j.id}"></span></div><div class="button-row" style="align-items:center;"><button onclick="adjustJob('${j.id}',-1)">-</button><span class="badge" id="job-val-${j.id}">0</span><button id="job-add-${j.id}" onclick="adjustJob('${j.id}',1)">+</button></div></div>`).join("");
     $("buildings-list").innerHTML = G.buildings.filter(b => S.unlocked["bld:" + b.id]).map(b => `<div class="row-item"><div class="row-info"><strong id="bld-name-${b.id}"></strong><span id="bld-desc-${b.id}"></span></div><button id="bld-btn-${b.id}" onclick="build('${b.id}')">Build</button></div>`).join("");
     renderDynamic();
 }
@@ -298,20 +322,47 @@ function renderMap() {
     cb.style.display = !mv && t && claimable(selTile) ? "" : "none";
     cb.textContent = `Claim (${costStr(claimCost())})`;
     mb.style.display = db.style.display = canEdit ? "" : "none";
+    if (canEdit) db.textContent = "Demolish";
     if (canEdit) mb.textContent = `Move (${costStr(moveCost(bOf(t.b)))})`;
 }
 
+function renderAlert(R) { // warn before the village starves
+    let msg = "";
+    for (const k in G.pop.needs) {
+        const net = R[k].p - R[k].c, left = S.res[k];
+        if (S.pop > 0 && left <= 0.5 && net <= 0) msg = `⚠ Out of ${RES[k].name}! Settlers will start leaving.`;
+        else if (net < 0 && left / -net < 120) msg = `⚠ ${RES[k].name} runs out in ${dur(left / -net)}.`;
+    }
+    const el = $("alert"); el.textContent = msg; el.style.display = msg ? "" : "none";
+}
+function renderGoals() { // the locked things closest to unlocking
+    const need = [];
+    [["res", G.resources, "resource"], ["job", G.jobs, "role"], ["bld", G.buildings, "structure"]].forEach(([k, list, label]) =>
+        list.forEach(x => { if (!S.unlocked[k + ":" + x.id]) need.push({ x, label, p: prog(x.requires) }); }));
+    need.sort((a, b) => b.p - a.p);
+    $("goals").replaceChildren(...(need.length ? need.slice(0, 4).map(n => {
+        const d = document.createElement("div"); d.className = "row-item";
+        d.innerHTML = `<div class="row-info"><strong>${esc(((n.x.icon || "") + " " + n.x.name).trim())}</strong><span>${n.label} · needs ${esc(needText(n.x.requires))}</span></div><span class="badge">${Math.round(n.p * 100)}%</span>`;
+        return d;
+    }) : [Object.assign(document.createElement("span"), { className: "hint", textContent: "Everything is unlocked." })]));
+}
+
 function renderDynamic() {
-    const { R } = flows(1), set = (id, t) => { const e = $(id); if (e) e.textContent = t; };
+    const { R, harvest } = flows(1), set = (id, t) => { const e = $(id); if (e) e.textContent = t; };
     G.resources.forEach(r => {
         const x = R[r.id], net = x.p - x.c;
         set("res-val-" + r.id, fmt(S.res[r.id]) + " / " + fmt(capOf(r.id)));
         set("res-prod-" + r.id, "P: +" + x.p.toFixed(1));
         set("res-cons-" + r.id, "C: -" + x.c.toFixed(1));
         const n = $("res-net-" + r.id);
-        if (n) { n.textContent = "Net: " + (net > 0 ? "+" : "") + net.toFixed(1); n.className = "rate-badge " + (net > 0 ? "positive" : net < 0 ? "negative" : "neutral"); }
+        if (n) { const full = net > 0 && S.res[r.id] >= capOf(r.id) - 0.01; n.textContent = full ? "FULL, wasting" : "Net: " + (net > 0 ? "+" : "") + net.toFixed(1); n.className = "rate-badge " + (net > 0 ? "positive" : net < 0 ? "negative" : "neutral"); }
     });
-    G.deposits.forEach(d => { const s = S.dep[d.id], hl = haul(d.id); set("dep-" + d.id, `${Math.floor(s.amt)} / ${s.cap} ${d.resource} (${d.regrow ? "regrows" : "finite"}) · hauling ${Math.round(hl.eff * 100)}%, avg ${hl.avg.toFixed(1)} tiles`); });
+    G.deposits.forEach(d => {
+        const s = S.dep[d.id], hl = haul(d.id), rate = harvest[d.id] || 0;
+        const y = d.regrow ? `yield ${s.cap > 0 ? Math.round(100 * s.amt / s.cap) : 0}% (regrows)` : rate > 0 ? `lasts ${dur(s.amt / rate)} at this rate` : s.amt > 0 ? "finite, untouched" : "exhausted";
+        set("dep-" + d.id, `${Math.floor(s.amt)} / ${s.cap} ${d.resource} · ${y} · hauling ${Math.round(hl.eff * 100)}%, avg ${hl.avg.toFixed(1)} tiles`);
+    });
+    renderAlert(R); renderGoals();
     const free = freeTiles();
     set("land-counter", `${S.map.filter(t => t.own).length} tiles owned · ${free} free`);
     set("seed-hint", `World seed ${S.seed}. Claim tiles next to your land (pricier as you grow) and build on them. Structures are placed automatically; select one on the map to move or demolish it. Depots near deposits cut hauling loss.`);
@@ -319,13 +370,40 @@ function renderDynamic() {
     set("pop-counter", `${S.pop} / ${housing()}`);
     set("idle-pop", getIdle());
     set("needs-hint", `(each villager consumes ${ioStr(G.pop.needs)})`);
-    G.jobs.forEach(j => { set("job-val-" + j.id, S.jobs[j.id]); const a = $("job-add-" + j.id); if (a) a.disabled = getIdle() < 1; });
+    G.jobs.forEach(j => { set("job-val-" + j.id, j.slots ? `${S.jobs[j.id]}/${slotCap(j)}` : S.jobs[j.id]); set("job-info-" + j.id, jobText(j)); const a = $("job-add-" + j.id); if (a) a.disabled = getIdle() < 1 || S.jobs[j.id] >= slotCap(j); });
     G.buildings.forEach(b => {
         const c = costOf(b);
         set("bld-name-" + b.id, `${b.name} (${S.bld[b.id]})`);
-        set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)}`);
-        const btn = $("bld-btn-" + b.id); if (btn) btn.disabled = !(afford(c) && free);
+        set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)}${b.terrain ? " • On: " + b.terrain.join("/") : ""}`);
+        const btn = $("bld-btn-" + b.id); if (btn) btn.disabled = !(afford(c) && canPlace(b));
     });
+}
+
+// --- STATS HISTORY: recorded for stats.html (per device, kept out of the save and the gist) ---
+// Three tiers: 10 s samples for 1 h, then 5 min averages for 24 h, then hourly averages for 14 days.
+const HKEY = "settlement_history_v1", HEVERY = [30, 12], HCAP = [360, 288, 336], HSTEP = 10000;
+let H = null, lastSample = 0;
+const histKeys = () => ["pop", "house", "idle", "owned"].concat(G.resources.flatMap(r => [r.id + ":l", r.id + ":p", r.id + ":c"]), G.deposits.map(d => "dep:" + d.id));
+function ensureHist() {
+    const keys = histKeys(), sig = keys.join();
+    if (!H) { try { H = JSON.parse(localStorage.getItem(HKEY)); } catch (e) { H = null; } }
+    if (!H || H.seed !== S.seed || H.sig !== sig) H = { seed: S.seed, sig, keys, tiers: [[], [], []], n: [0, 0] };
+}
+function pushTier(i, row) {
+    const T = H.tiers[i]; T.push(row); if (T.length > HCAP[i]) T.shift();
+    if (i < 2 && ++H.n[i] % HEVERY[i] === 0) {
+        const w = T.slice(-HEVERY[i]);
+        pushTier(i + 1, row.map((_, k) => { const v = w.reduce((a, x) => a + x[k], 0) / w.length; return k ? Math.round(v * 100) / 100 : Math.round(v); }));
+    }
+}
+function sampleHist(force) {
+    const now = Date.now();
+    if (!force && now - lastSample < HSTEP) return;
+    lastSample = now; ensureHist();
+    const { R } = flows(1), r2 = x => Math.round(x * 100) / 100;
+    pushTier(0, [now, S.pop, housing(), getIdle(), S.map.filter(t => t.own).length]
+        .concat(G.resources.flatMap(r => [r2(S.res[r.id]), r2(R[r.id].p), r2(R[r.id].c)]), G.deposits.map(d => r2(S.dep[d.id].amt))));
+    try { localStorage.setItem(HKEY, JSON.stringify(H)); } catch (e) { /* storage full: stats stop persisting, the game is unaffected */ }
 }
 
 // --- PERSISTENCE & SECRET GIST SYNC ---
@@ -394,30 +472,34 @@ function bindEvents() {
     $("push-gist-btn").onclick = () => push(false);
     $("pull-gist-btn").onclick = pull;
     $("claim-tile-btn").onclick = claimTile;
-    $("move-btn").onclick = startMove; $("demolish-btn").onclick = demolish;
+    $("move-btn").onclick = startMove;
+    $("demolish-btn").onclick = () => armed($("demolish-btn"), "Tap again: demolish", demolish);
     $("local-save-btn").onclick = () => { saveLocal(); log("Game saved locally."); };
-    $("hard-reset-btn").onclick = () => {
-        if (!confirm("Start a new run? This replaces the current save.")) return;
-        const t = prompt("World seed (blank for random):", "");
-        if (t === null) return;
-        startNew(t.trim() ? toSeed(t.trim()) : randSeed(), S); saveLocal(); renderAll();
-    };
+    $("hard-reset-btn").onclick = () => armed($("hard-reset-btn"), "Tap again: replace this run", () => {
+        const t = $("seed-in").value.trim();
+        startNew(t ? toSeed(t) : randSeed(), S); saveLocal(); renderAll(); log(`New run started (seed ${S.seed}).`);
+    });
     window.addEventListener("pagehide", saveLocal);
     document.addEventListener("visibilitychange", () => {
-        if (document.hidden) { saveLocal(); push(true); }
+        if (document.hidden) { saveLocal(); sampleHist(true); push(true); }
         else advance() ? renderAll() : renderDynamic();
     });
 }
 
+async function fetchFresh(u) { // revalidate with the server; use the cached copy when offline
+    try { const r = await fetch(u, { cache: "no-cache" }); if (r.ok) return r; } catch (e) { /* offline */ }
+    return fetch(u, { cache: "force-cache" });
+}
+
 async function init() {
-    G = await (await fetch("gamedata.json", { cache: "no-cache" })).json();
-    G.resources.forEach(r => RES[r.id] = r);
+    G = await (await fetchFresh("gamedata.json")).json();
+    G.resources.forEach(r => RES[r.id] = r); G.deposits.forEach(d => DEP[d.id] = d);
     document.title = G.meta.title; $("game-h1").textContent = G.meta.title;
     S = loadLocal();
     if (S) ensure(); else startNew(randSeed());
     loadCredsUI(); syncUI(); bindEvents();
     advance(); checkUnlocks(); renderAll();
-    setInterval(() => { advance() ? renderAll() : renderDynamic(); }, 1000);
+    setInterval(() => { advance() ? renderAll() : renderDynamic(); sampleHist(); }, 1000);
     setInterval(saveLocal, G.meta.autoSaveMs);
 }
 init();

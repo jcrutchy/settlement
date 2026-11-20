@@ -1,23 +1,25 @@
 {
-  "meta": { "title": "SETTLEMENT // v0.5", "autoSaveMs": 30000, "liveStepSec": 1, "offlineStepSec": 5, "maxOfflineSec": 28800 },
-  "pop": { "needs": { "food": 0.5 }, "growthRate": 0.15, "growthFoodMin": 10, "starveRate": 0.2 },
+  "meta": { "title": "SETTLEMENT // v0.6", "autoSaveMs": 30000, "liveStepSec": 1, "offlineStepSec": 5, "maxOfflineSec": 28800 },
+  "pop": { "needs": { "food": 0.5 }, "growthRate": 0.15, "growthFoodMin": 10, "starveRate": 0.05 },
   "land": { "cost": { "wood": 20 }, "growth": { "type": "linear", "rate": 0.25 } },
   "map": {
-    "size": 15, "startRadius": 1, "freeRadius": 2, "distancePenalty": 0.07, "minEfficiency": 0.25, "centerIcon": "🏕️",
+    "size": 15, "startRadius": 1, "freeRadius": 1, "distancePenalty": 0.08, "minEfficiency": 0.25, "centerIcon": "🏕️",
     "terrain": [
       { "id": "plain", "icon": "🟩", "weight": 50 },
       { "id": "forest", "icon": "🌲", "weight": 28, "start": "near" },
       { "id": "hills", "icon": "⛰️", "weight": 16, "start": "ring" },
-      { "id": "claybank", "icon": "🟫", "weight": 6 }
+      { "id": "claybank", "icon": "🟫", "weight": 6 },
+      { "id": "orebed", "icon": "🔶", "weight": 5 }
     ]
   },
   "deposits": [
     { "id": "forest", "name": "Forest", "resource": "wood", "terrain": "forest", "perTile": 120, "variance": 0.4, "regrow": 0.04 },
     { "id": "quarry", "name": "Quarry", "resource": "stone", "terrain": "hills", "perTile": 160, "variance": 0.5, "regrow": 0 },
-    { "id": "claypit", "name": "Clay pit", "resource": "clay", "terrain": "claybank", "perTile": 120, "variance": 0.3, "regrow": 0 }
+    { "id": "claypit", "name": "Clay pit", "resource": "clay", "terrain": "claybank", "perTile": 120, "variance": 0.3, "regrow": 0 },
+    { "id": "ironvein", "name": "Iron vein", "resource": "iron", "terrain": "orebed", "perTile": 100, "variance": 0.3, "regrow": 0 }
   ],
   "resources": [
-    { "id": "food", "name": "Food", "icon": "🌾", "initial": 10, "cap": 100, "spoil": 0.003, "manual": true },
+    { "id": "food", "name": "Food", "icon": "🌾", "initial": 30, "cap": 100, "spoil": 0.003, "manual": true },
     { "id": "wood", "name": "Wood", "icon": "🪵", "initial": 0, "cap": 150, "manual": true },
     { "id": "stone", "name": "Stone", "icon": "🪨", "cap": 100, "requires": { "resource": "wood", "gte": 15 } },
     { "id": "clay", "name": "Clay", "icon": "🧱", "cap": 100, "requires": { "resource": "stone", "gte": 20 } },
@@ -28,19 +30,22 @@
     { "id": "tools", "name": "Tools", "icon": "🛠️", "cap": 40, "requires": { "building": "foundry", "gte": 1 } }
   ],
   "jobs": [
-    { "id": "forager", "name": "Forager", "outputs": { "food": 1.2 } },
+    { "id": "forager", "name": "Forager", "outputs": { "food": 1.3 } },
+    { "id": "farmer", "name": "Farmer", "outputs": { "food": 2.0 }, "slots": { "building": "farm", "per": 3 }, "requires": { "building": "farm", "gte": 1 } },
     { "id": "woodcutter", "name": "Woodcutter", "outputs": { "wood": 0.8 }, "deposit": "forest" },
     { "id": "miner", "name": "Miner", "outputs": { "stone": 0.5 }, "deposit": "quarry", "requires": { "resource": "wood", "gte": 15 } },
     { "id": "clay_digger", "name": "Clay Digger", "outputs": { "clay": 0.4 }, "deposit": "claypit", "requires": { "resource": "stone", "gte": 20 } },
     { "id": "sawyer", "name": "Sawyer", "inputs": { "wood": 0.3 }, "outputs": { "planks": 0.3 }, "requires": { "resource": "wood", "gte": 40 } },
     { "id": "brickmaker", "name": "Brickmaker", "inputs": { "clay": 0.2 }, "outputs": { "bricks": 0.2 }, "requires": { "building": "kiln", "gte": 1 } },
-    { "id": "iron_miner", "name": "Iron Miner", "outputs": { "iron": 0.25 }, "requires": { "resource": "stone", "gte": 30 } },
+    { "id": "iron_miner", "name": "Iron Miner", "outputs": { "iron": 0.25 }, "deposit": "ironvein", "requires": { "resource": "stone", "gte": 30 } },
     { "id": "collier", "name": "Collier", "outputs": { "coal": 0.4 }, "requires": { "resource": "iron", "gte": 10 } },
     { "id": "blacksmith", "name": "Blacksmith", "inputs": { "iron": 0.15, "coal": 0.1 }, "outputs": { "tools": 0.15 }, "requires": { "building": "foundry", "gte": 1 } }
   ],
   "buildings": [
     { "id": "hut", "name": "Timber Hut", "icon": "🛖", "desc": "+2 housing", "cost": { "wood": 10 }, "uses": 1,
       "effects": [ { "type": "housing", "value": 2 } ] },
+    { "id": "farm", "name": "Farm", "icon": "🌽", "desc": "3 farmer slots; needs plain tiles", "cost": { "wood": 35 }, "uses": 1,
+      "growth": { "type": "linear", "rate": 0.2 }, "terrain": ["plain"], "requires": { "resource": "wood", "gte": 30 }, "effects": [] },
     { "id": "storehouse", "name": "Storehouse", "icon": "🏬", "desc": "+100 capacity, all stockpiles; hauling depot", "cost": { "wood": 40, "stone": 10 }, "uses": 1,
       "requires": { "resource": "stone", "gte": 5 }, "effects": [ { "type": "capacity", "resource": "*", "value": 100 }, { "type": "depot", "value": 1 } ] },
     { "id": "granary", "name": "Granary", "icon": "🏺", "desc": "+300 food capacity, halves food spoilage", "cost": { "wood": 30, "stone": 15 }, "uses": 1,

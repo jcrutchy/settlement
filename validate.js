@@ -74,6 +74,10 @@
                 if (!ids.deposits.has(j.deposit)) err(w, `unknown deposit "${j.deposit}"`);
                 else if (!(G.deposits.find(d => d.id === j.deposit).resource in (j.outputs || {}))) warn(w, "deposit resource is not one of its outputs");
             }
+            if (j.slots !== undefined) {
+                if (!j.slots || !ids.buildings.has(j.slots.building)) err(w, "slots must name an existing building");
+                else if (!isNum(j.slots.per, 1)) err(w, "slots.per must be a number >= 1");
+            }
             walk(j.requires, w);
         });
 
@@ -85,6 +89,7 @@
             if (!b.icon) warn(w, "missing icon (shown on the map)");
             if (!isNum(b.uses, 1)) err(w, "uses (plots) must be a number >= 1");
             checkGrowth(b.growth, w);
+            if (b.terrain !== undefined && (!Array.isArray(b.terrain) || b.terrain.some(t => !(G.map && G.map.terrain || []).some(x => x.id === t)))) err(w, "terrain must be a list of ids from map.terrain");
             walk(b.requires, w);
             if (!Array.isArray(b.effects)) return err(w, "effects must be an array (use [] for none)");
             b.effects.forEach(e => {
@@ -121,7 +126,7 @@
         const ok = c => !c || (c.all ? c.all.every(ok) : c.any ? c.any.some(ok) : c.resource !== undefined ? resOk.has(c.resource) : c.building !== undefined ? bldOk.has(c.building) : false);
         for (let ch = true; ch;) {
             ch = false;
-            jobs.forEach(j => { if (!jobOk.has(j.id) && ok(j.requires) && Object.keys(j.inputs || {}).every(k => resOk.has(k))) { jobOk.add(j.id); ch = true; } });
+            jobs.forEach(j => { if (!jobOk.has(j.id) && ok(j.requires) && (!j.slots || bldOk.has(j.slots.building)) && Object.keys(j.inputs || {}).every(k => resOk.has(k))) { jobOk.add(j.id); ch = true; } });
             resources.forEach(r => { if (!resOk.has(r.id) && ok(r.requires) && (r.manual || jobs.some(j => jobOk.has(j.id) && r.id in (j.outputs || {})))) { resOk.add(r.id); ch = true; } });
             buildings.forEach(b => { if (!bldOk.has(b.id) && ok(b.requires) && Object.keys(b.cost || {}).every(k => resOk.has(k))) { bldOk.add(b.id); ch = true; } });
         }
