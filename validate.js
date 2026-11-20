@@ -59,7 +59,7 @@
             const w = `deposit "${d.id}"`;
             if (!hasRes(d.resource)) err(w, `unknown resource "${d.resource}"`);
             if (!isNum(d.perTile, 1)) err(w, "perTile must be a number >= 1");
-            if (!(G.map && Array.isArray(G.map.terrain) && G.map.terrain.some(t => t.id === d.terrain))) err(w, `terrain "${d.terrain}" is not defined in map.terrain`);
+            [].concat(d.terrain).forEach(t => { if (!(G.map && Array.isArray(G.map.terrain) && G.map.terrain.some(x => x.id === t))) err(w, `terrain "${t}" is not defined in map.terrain`); });
             if (!isNum(d.variance) || d.variance > 1) err(w, "variance must be between 0 and 1");
             if (!isNum(d.regrow)) err(w, "regrow must be a number >= 0");
             if (!jobs.some(j => j.deposit === d.id)) warn(w, "no job harvests this deposit");
@@ -89,7 +89,7 @@
             if (!b.icon) warn(w, "missing icon (shown on the map)");
             if (!isNum(b.uses, 1)) err(w, "uses (plots) must be a number >= 1");
             checkGrowth(b.growth, w);
-            if (b.terrain !== undefined && (!Array.isArray(b.terrain) || b.terrain.some(t => !(G.map && G.map.terrain || []).some(x => x.id === t)))) err(w, "terrain must be a list of ids from map.terrain");
+            ["terrain", "near"].forEach(f => { if (b[f] !== undefined && (!Array.isArray(b[f]) || b[f].some(t => !(G.map && G.map.terrain || []).some(x => x.id === t)))) err(w, `${f} must be a list of ids from map.terrain`); });
             walk(b.requires, w);
             if (!Array.isArray(b.effects)) return err(w, "effects must be an array (use [] for none)");
             b.effects.forEach(e => {
@@ -112,11 +112,19 @@
         }
         const M = G.map;
         if (!M) err("map", "missing map block"); else {
-            if (!Number.isInteger(M.size) || M.size < 5 || M.size > 40) err("map", "size must be an integer from 5 to 40");
+            const S0 = M.start;
+            if (!S0 || !Array.isArray(S0.need) || !S0.center) err("map", "start needs a center terrain and a need list");
+            else {
+                if (!(M.terrain || []).some(t => t.id === S0.center)) err("map", `start.center "${S0.center}" is not a terrain`);
+                S0.need.forEach((n, i) => [].concat(n.terrain).forEach(t => { if (!(M.terrain || []).some(x => x.id === t)) err("map", `start.need[${i}] references unknown terrain "${t}"`); }));
+            }
             ["freeRadius", "distancePenalty", "startRadius"].forEach(k => { if (!isNum(M[k])) err("map", `${k} must be a number >= 0`); });
             if (!isNum(M.minEfficiency) || M.minEfficiency > 1) err("map", "minEfficiency must be between 0 and 1");
             if (!Array.isArray(M.terrain) || !M.terrain.length) err("map", "terrain must be a non-empty array");
-            else M.terrain.forEach(t => { if (!t.id || !t.icon || !isNum(t.weight, 1e-9)) err(`terrain "${t.id}"`, "needs id, icon and a positive weight"); });
+            else {
+                M.terrain.forEach(t => { if (!t.id || !t.icon || !t.color) err(`terrain "${t.id}"`, "needs id, icon and color"); });
+                if (!M.terrain.some(t => !t.gen)) err("map", "no fallback terrain: one terrain must have no gen rules so every tile matches something");
+            }
             if (!buildings.some(b => (b.effects || []).some(e => e.type === "depot"))) warn("map", "no building has a depot effect, so hauling distance can never be reduced");
         }
         if (!G.meta) err("meta", "missing meta block");

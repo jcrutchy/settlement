@@ -12,8 +12,9 @@ Status: early (v0.6). The engine is stable enough to play, but the balance has h
 - Settlers arrive while there is free housing and food. Each one eats food every second, so watch the **Net** rate on each stockpile (P = production, C = consumption).
 - Assign idle villagers to **jobs** with the + and - buttons. Some jobs consume one resource to make another.
 - **Stockpiles have a capacity.** Build storehouses and granaries to raise it.
-- **The map** is a grid of terrain tiles. Claim tiles next to your land (the price rises as you grow), then press **Build** on a structure. It goes on the best free tile automatically (depots where they cut hauling loss the most, everything else near the town centre). Select a building's tile to **Move** it (costs 25%) or **Demolish** it (refunds half).
+- **The map** is endless and generated from the seed: grassland, forests, hills, ore beds, clay banks, rivers, lakes and ocean. Drag to pan; pinch, scroll or use the +/- buttons to zoom. Claim tiles next to your land (the price rises as you grow), then press **Build** on a structure. It goes on the best free tile automatically (depots where they cut hauling loss the most, everything else near the town centre). Select a building's tile to **Move** it (costs 25%) or **Demolish** it (refunds half).
 - **Deposits live on tiles.** Forests regrow, hills and clay banks don't. Cutting wood faster than the forest regrows empties it.
+- **Fishing:** a Fishing Hut must stand next to water and gives 2 fisher slots. Fish come from water tiles you have claimed (claiming water is allowed, building on it isn't), and they regrow.
 - **Hauling matters.** Gatherers deliver less the further their deposit tiles are from a depot (your town centre, or a Storehouse). The Land panel shows the current hauling percentage for each deposit.
 - **Farms** need plain tiles and give farmer slots (3 per farm). Farmers out-produce foragers, so farms are how food scales.
 - **Finite deposits** (stone, clay, iron) give full output until they run out; regrowing ones (forests) yield less as they thin. The Land panel shows which, plus how long a finite one will last.

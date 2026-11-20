@@ -36,7 +36,10 @@
             <span id="land-counter" class="badge">0 / 0 plots</span>
         </div>
         <p class="hint" id="seed-hint"></p>
-        <div id="map" class="map"></div>
+        <div class="mapwrap">
+            <canvas id="map"></canvas>
+            <div class="mapbtns"><button id="zoom-in">+</button><button id="zoom-out">&minus;</button><button id="recenter" title="Back to town">&#8982;</button></div>
+        </div>
         <div class="button-row" style="margin: 10px 0; align-items: center;">
             <button id="claim-tile-btn" style="display:none;">Claim tile</button>
             <button id="move-btn" style="display:none;">Move</button>
