@@ -240,9 +240,9 @@ function advance() { // simulate real elapsed time since lastTick, in chunks
 
 // --- PLAYER ACTIONS (each bumps rev, which drives sync conflict detection) ---
 function gather(id) {
-    const d = G.deposits.find(x => x.resource === id);
-    if ((d && S.dep[d.id].amt < 1) || S.res[id] >= capOf(id)) return;
-    S.res[id]++; if (d) S.dep[d.id].amt--;
+    const d = RES[id].manualDeposit && S.dep[RES[id].manualDeposit]; // hand-gathering draws on this deposit, if the resource names one
+    if ((d && d.amt < 1) || S.res[id] >= capOf(id)) return;
+    S.res[id]++; if (d) d.amt--;
     S.rev++; checkUnlocks(); renderDynamic();
 }
 function adjustJob(id, delta) {

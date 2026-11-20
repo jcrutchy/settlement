@@ -50,6 +50,7 @@
             if (!isNum(r.cap, 1)) err(w, "cap must be a number >= 1");
             if (!r.icon) warn(w, "missing icon");
             if (r.initial !== undefined && !isNum(r.initial)) err(w, "initial must be a number");
+            if (r.manualDeposit !== undefined && !ids.deposits.has(r.manualDeposit)) err(w, `manualDeposit "${r.manualDeposit}" is not a deposit`);
             if (r.spoil !== undefined && (!isNum(r.spoil) || r.spoil >= 1)) err(w, "spoil must be a number from 0 to 1 (fraction lost per second)");
             walk(r.requires, w);
         });
