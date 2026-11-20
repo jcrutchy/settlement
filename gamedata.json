@@ -1,5 +1,5 @@
 {
-  "meta": { "title": "SETTLEMENT // v0.7", "autoSaveMs": 30000, "liveStepSec": 1, "offlineStepSec": 5, "maxOfflineSec": 28800 },
+  "meta": { "title": "SETTLEMENT // v0.8", "autoSaveMs": 30000, "liveStepSec": 1, "offlineStepSec": 5, "maxOfflineSec": 28800 },
   "pop": { "needs": { "food": 0.5 }, "growthRate": 0.15, "growthFoodMin": 10, "starveRate": 0.05 },
   "land": { "cost": { "wood": 20 }, "growth": { "type": "linear", "rate": 0.25 } },
   "map": {
@@ -24,7 +24,8 @@
     { "id": "quarry", "name": "Quarry", "resource": "stone", "terrain": ["hills"], "perTile": 160, "variance": 0.5, "regrow": 0 },
     { "id": "claypit", "name": "Clay pit", "resource": "clay", "terrain": ["claybank"], "perTile": 120, "variance": 0.3, "regrow": 0 },
     { "id": "ironvein", "name": "Iron vein", "resource": "iron", "terrain": ["orebed"], "perTile": 100, "variance": 0.3, "regrow": 0 },
-    { "id": "fishery", "name": "Fishing grounds", "resource": "food", "terrain": ["lake", "river", "ocean"], "perTile": 50, "variance": 0.3, "regrow": 0.03 }
+    { "id": "fishery", "name": "Fishing grounds", "resource": "food", "terrain": ["lake", "river", "ocean"], "perTile": 50, "variance": 0.3, "regrow": 0.03 },
+    { "id": "game", "name": "Wild game", "resource": "food", "terrain": ["forest"], "perTile": 40, "variance": 0.4, "regrow": 0.02 }
   ],
   "resources": [
     { "id": "food", "name": "Food", "icon": "🌾", "initial": 30, "cap": 100, "spoil": 0.003, "manual": true },
@@ -35,7 +36,10 @@
     { "id": "bricks", "name": "Bricks", "icon": "🏛️", "cap": 80, "requires": { "building": "kiln", "gte": 1 } },
     { "id": "iron", "name": "Iron Ore", "icon": "⛏️", "cap": 80, "requires": { "resource": "stone", "gte": 30 } },
     { "id": "coal", "name": "Coal", "icon": "⬛", "cap": 80, "requires": { "resource": "iron", "gte": 10 } },
-    { "id": "tools", "name": "Tools", "icon": "🛠️", "cap": 40, "requires": { "building": "foundry", "gte": 1 } }
+    { "id": "tools", "name": "Tools", "icon": "🛠️", "cap": 40, "requires": { "building": "foundry", "gte": 1 } },
+    { "id": "knowledge", "name": "Knowledge", "icon": "📜", "cap": 300, "requires": { "building": "library", "gte": 1 } },
+    { "id": "flax", "name": "Flax", "icon": "🌿", "cap": 80, "requires": { "building": "flax_field", "gte": 1 } },
+    { "id": "cloth", "name": "Cloth", "icon": "🧵", "cap": 60, "requires": { "building": "loom_house", "gte": 1 } }
   ],
   "jobs": [
     { "id": "forager", "name": "Forager", "outputs": { "food": 1.3 } },
@@ -48,7 +52,11 @@
     { "id": "brickmaker", "name": "Brickmaker", "inputs": { "clay": 0.2 }, "outputs": { "bricks": 0.2 }, "requires": { "building": "kiln", "gte": 1 } },
     { "id": "iron_miner", "name": "Iron Miner", "outputs": { "iron": 0.25 }, "deposit": "ironvein", "requires": { "resource": "stone", "gte": 30 } },
     { "id": "collier", "name": "Collier", "outputs": { "coal": 0.4 }, "requires": { "resource": "iron", "gte": 10 } },
-    { "id": "blacksmith", "name": "Blacksmith", "inputs": { "iron": 0.15, "coal": 0.1 }, "outputs": { "tools": 0.15 }, "requires": { "building": "foundry", "gte": 1 } }
+    { "id": "blacksmith", "name": "Blacksmith", "inputs": { "iron": 0.15, "coal": 0.1 }, "outputs": { "tools": 0.15 }, "requires": { "building": "foundry", "gte": 1 } },
+    { "id": "hunter", "name": "Hunter", "outputs": { "food": 1.6 }, "deposit": "game", "slots": { "building": "hunting_lodge", "per": 2 }, "requires": { "building": "hunting_lodge", "gte": 1 } },
+    { "id": "scholar", "name": "Scholar", "outputs": { "knowledge": 0.25 }, "slots": { "building": "library", "per": 2 }, "requires": { "building": "library", "gte": 1 } },
+    { "id": "flax_farmer", "name": "Flax Farmer", "outputs": { "flax": 1.0 }, "slots": { "building": "flax_field", "per": 3 }, "requires": { "building": "flax_field", "gte": 1 } },
+    { "id": "weaver", "name": "Weaver", "inputs": { "flax": 0.6 }, "outputs": { "cloth": 0.4 }, "slots": { "building": "loom_house", "per": 2 }, "requires": { "building": "loom_house", "gte": 1 } }
   ],
   "buildings": [
     { "id": "hut", "name": "Timber Hut", "icon": "🛖", "desc": "+2 housing", "cost": { "wood": 10 }, "uses": 1,
@@ -69,6 +77,26 @@
     { "id": "foundry", "name": "Iron Smelter", "icon": "🏭", "desc": "Unlocks tools and blacksmiths", "cost": { "stone": 60, "iron": 20 }, "uses": 1,
       "requires": { "resource": "iron", "gte": 15 }, "effects": [] },
     { "id": "stonehouse", "name": "Stone House", "icon": "🏘️", "desc": "+8 housing", "cost": { "bricks": 25, "planks": 20, "stone": 10 }, "uses": 1,
-      "requires": { "resource": "bricks", "gte": 10 }, "effects": [ { "type": "housing", "value": 8 } ] }
+      "requires": { "resource": "bricks", "gte": 10 }, "effects": [ { "type": "housing", "value": 8 } ] },
+    { "id": "hunting_lodge", "name": "Hunting Lodge", "icon": "🏹", "desc": "2 hunter slots; stands in a forest", "cost": { "wood": 40, "planks": 10 }, "uses": 1,
+      "growth": { "type": "linear", "rate": 0.2 }, "terrain": ["forest"], "requires": { "tech": "hunting" }, "effects": [] },
+    { "id": "library", "name": "Library", "icon": "📚", "desc": "2 scholar slots; scholars produce knowledge for research", "cost": { "wood": 60, "planks": 30, "stone": 20 }, "uses": 1,
+      "growth": { "type": "linear", "rate": 0.5 }, "requires": { "tech": "writing" }, "effects": [] },
+    { "id": "flax_field", "name": "Flax Field", "icon": "🪴", "desc": "3 flax farmer slots; needs plain tiles", "cost": { "wood": 30 }, "uses": 1,
+      "growth": { "type": "linear", "rate": 0.2 }, "terrain": ["plain"], "requires": { "tech": "weaving" }, "effects": [] },
+    { "id": "loom_house", "name": "Loom House", "icon": "🧶", "desc": "2 weaver slots; turns flax into cloth", "cost": { "wood": 40, "planks": 20 }, "uses": 1,
+      "growth": { "type": "linear", "rate": 0.3 }, "requires": { "tech": "weaving" }, "effects": [] },
+    { "id": "townhouse", "name": "Townhouse", "icon": "🏡", "desc": "+12 housing", "cost": { "bricks": 30, "planks": 30, "cloth": 15 }, "uses": 1,
+      "growth": { "type": "linear", "rate": 0.25 }, "requires": { "tech": "masonry" }, "effects": [ { "type": "housing", "value": 12 } ] }
+  ],
+  "techs": [
+    { "id": "writing", "name": "Writing", "desc": "Record-keeping. Unlocks the Library.", "cost": { "planks": 25 }, "effects": [] },
+    { "id": "hunting", "name": "Tracking", "desc": "Hunting lodges in the forest.", "cost": { "wood": 40, "food": 20 }, "effects": [] },
+    { "id": "weaving", "name": "Weaving", "desc": "Flax fields, looms and cloth.", "cost": { "knowledge": 20 }, "requires": { "tech": "writing" }, "effects": [] },
+    { "id": "masonry", "name": "Masonry", "desc": "Townhouses built from brick.", "cost": { "knowledge": 30, "bricks": 15 }, "requires": { "tech": "writing" }, "effects": [] },
+    { "id": "crop_rotation", "name": "Crop Rotation", "desc": "+15% food output.", "cost": { "knowledge": 40 }, "requires": { "all": [ { "tech": "writing" }, { "building": "farm", "gte": 2 } ] }, "effects": [ { "type": "outputMult", "resource": "food", "value": 0.15 } ] },
+    { "id": "forestry", "name": "Forestry", "desc": "+20% wood output.", "cost": { "knowledge": 35 }, "requires": { "tech": "writing" }, "effects": [ { "type": "outputMult", "resource": "wood", "value": 0.2 } ] },
+    { "id": "metallurgy", "name": "Metallurgy", "desc": "+20% iron ore and +30% tools.", "cost": { "knowledge": 60, "iron": 20 }, "requires": { "tech": "masonry" }, "effects": [ { "type": "outputMult", "resource": "iron", "value": 0.2 }, { "type": "outputMult", "resource": "tools", "value": 0.3 } ] },
+    { "id": "surveying", "name": "Surveying", "desc": "Better storage everywhere: +150 capacity.", "cost": { "knowledge": 50, "cloth": 20 }, "requires": { "tech": "weaving" }, "effects": [ { "type": "capacity", "resource": "*", "value": 150 } ] }
   ]
 }

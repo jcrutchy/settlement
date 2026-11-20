@@ -34,14 +34,14 @@ function newState(seed, prev) {
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) own[K(c.x + dx, c.y + dy)] = { x: c.x + dx, y: c.y + dy, b: null };
     own[K(c.x, c.y)].b = "center";
     const s = { version: 4, seed, rev: prev ? prev.rev + 1 : 0, cloudRev: prev ? prev.cloudRev : 0, lastTick: Date.now(),
-        res: {}, unlocked: {}, pop: 0, growth: 0, starve: 0, jobs: {}, bld: {}, claims: 0, center: c, own, dep: {},
+        res: {}, unlocked: {}, tech: {}, pop: 0, growth: 0, starve: 0, jobs: {}, bld: {}, claims: 0, center: c, own, dep: {},
         logs: [`You arrive at a quiet clearing (seed ${seed}). Gather wood to build shelter.`] };
     G.deposits.forEach(d => { const k = poolCap(s, d); s.dep[d.id] = { cap: k, amt: k }; });
     return s;
 }
 
 function ensure() { // fills in anything new in gamedata.json, and repairs NaN left by older versions
-    setWorld(S.seed);
+    setWorld(S.seed); S.tech = S.tech || {};
     G.resources.forEach(r => { if (S.res[r.id] !== undefined && !Number.isFinite(S.res[r.id])) S.res[r.id] = r.initial || 0; });
     G.deposits.forEach(d => { const p = S.dep[d.id]; if (p && !(Number.isFinite(p.amt) && Number.isFinite(p.cap))) { const k = poolCap(S, d); S.dep[d.id] = { cap: k, amt: k }; } });
     G.resources.forEach(r => { if (S.res[r.id] === undefined) S.res[r.id] = r.initial || 0; });
@@ -57,6 +57,7 @@ function met(c) {
     if (!c) return true;
     if (c.all) return c.all.every(met);
     if (c.any) return c.any.some(met);
+    if (c.tech !== undefined) return !!S.tech[c.tech];
     if (c.resource) return S.res[c.resource] >= c.gte;
     if (c.building) return S.bld[c.building] >= c.gte;
     return false;
@@ -64,7 +65,7 @@ function met(c) {
 
 function checkUnlocks(silent) {
     let changed = false;
-    [["res", G.resources, "Discovered resource"], ["job", G.jobs, "New role available"], ["bld", G.buildings, "New structure unlocked"]].forEach(([k, list, msg]) => {
+    [["res", G.resources, "Discovered resource"], ["job", G.jobs, "New role available"], ["bld", G.buildings, "New structure unlocked"], ["tech", G.techs, "Technology available"]].forEach(([k, list, msg]) => {
         list.forEach(x => {
             const key = k + ":" + x.id;
             if (!S.unlocked[key] && met(x.requires)) { S.unlocked[key] = true; changed = true; if (!silent) log(`${msg}: ${x.name}.`); }
@@ -73,14 +74,11 @@ function checkUnlocks(silent) {
     return changed;
 }
 
-function eff(type, key) { // sum of a building effect type across everything built
+function eff(type, key) { // sum of an effect type across everything built and every researched tech
     let t = 0;
-    G.buildings.forEach(b => {
-        const n = S.bld[b.id];
-        if (n) b.effects.forEach(e => {
-            if (e.type === type && (key === undefined || e.resource === key || (type === "capacity" && e.resource === "*"))) t += e.value * n;
-        });
-    });
+    const add = (list, n) => list.forEach(e => { if (e.type === type && (key === undefined || e.resource === key || (type === "capacity" && e.resource === "*"))) t += e.value * n; });
+    G.buildings.forEach(b => { if (S.bld[b.id]) add(b.effects, S.bld[b.id]); });
+    G.techs.forEach(q => { if (S.tech[q.id]) add(q.effects || [], 1); });
     return t;
 }
 
@@ -89,8 +87,8 @@ const housing = () => eff("housing");
 const getIdle = () => Math.max(0, S.pop - sum(S.jobs));
 const slotCap = j => j.slots ? S.bld[j.slots.building] * j.slots.per : Infinity;
 const have = c => c.resource !== undefined ? S.res[c.resource] : S.bld[c.building];
-const prog = c => !c ? 1 : c.all ? Math.min(...c.all.map(prog)) : c.any ? Math.max(...c.any.map(prog)) : Math.min(1, have(c) / c.gte);
-const needText = c => c.all ? c.all.map(needText).join(", ") : c.any ? c.any.map(needText).join(" or ") : `${c.resource ?? c.building} ${fmt(have(c))}/${c.gte}`;
+const prog = c => !c ? 1 : c.all ? Math.min(...c.all.map(prog)) : c.any ? Math.max(...c.any.map(prog)) : c.tech !== undefined ? (S.tech[c.tech] ? 1 : 0) : Math.min(1, have(c) / c.gte);
+const needText = c => c.all ? c.all.map(needText).join(", ") : c.any ? c.any.map(needText).join(" or ") : c.tech !== undefined ? "research " + (G.techs.find(q => q.id === c.tech) || { name: c.tech }).name : `${c.resource ?? c.building} ${fmt(have(c))}/${c.gte}`;
 const scaled = (cost, g, n) => {
     const m = g.type === "exp" ? Math.pow(g.rate, n) : g.type === "linear" ? 1 + g.rate * n : 1;
     const c = {}; for (const k in cost) c[k] = Math.ceil(cost[k] * m); return c;
@@ -302,14 +300,20 @@ function demolish() {
     G.jobs.forEach(j => { if (S.jobs[j.id] > slotCap(j)) S.jobs[j.id] = slotCap(j); }); // workers lose their slots
     log(`Demolished ${b.name}.`); checkUnlocks(); renderAll();
 }
+function research(id) {
+    const q = G.techs.find(x => x.id === id);
+    if (!q || S.tech[id] || !met(q.requires) || !afford(q.cost)) return;
+    spend(q.cost); S.tech[id] = true; S.rev++; hCache = null;
+    log(`Researched ${q.name}.`); checkUnlocks(); renderAll();
+}
 function claimTile() {
     const c = claimCost();
     if (!selTile || S.own[selTile]) return;
     const [x, y] = selTile.split(",").map(Number);
     if (!claimable(x, y) || !afford(c)) return;
     spend(c); S.own[selTile] = { x, y, b: null }; S.claims++; S.rev++; hCache = null;
-    const tid = terrainAt(x, y), d = G.deposits.find(q => dterr(q).includes(tid));
-    if (d) { const k = tileCap(d, x, y); S.dep[d.id].cap += k; S.dep[d.id].amt += k; }
+    const tid = terrainAt(x, y);
+    G.deposits.filter(q => dterr(q).includes(tid)).forEach(d => { const k = tileCap(d, x, y); S.dep[d.id].cap += k; S.dep[d.id].amt += k; });
     log(`Claimed a ${tid} tile.`); selTile = null; renderAll();
 }
 
@@ -331,6 +335,12 @@ function renderAll() {
     $("deposits-list").innerHTML = G.deposits.map(d => `<div class="row-item"><div class="row-info"><strong>${d.name}</strong><span id="dep-${d.id}"></span></div></div>`).join("");
     $("jobs-list").innerHTML = G.jobs.filter(j => S.unlocked["job:" + j.id]).map(j => `<div class="row-item"><div class="row-info"><strong>${j.name}</strong><span id="job-info-${j.id}"></span></div><div class="button-row" style="align-items:center;"><button onclick="adjustJob('${j.id}',-1)">-</button><span class="badge" id="job-val-${j.id}">0</span><button id="job-add-${j.id}" onclick="adjustJob('${j.id}',1)">+</button></div></div>`).join("");
     $("buildings-list").innerHTML = G.buildings.filter(b => S.unlocked["bld:" + b.id]).map(b => `<div class="row-item"><div class="row-info"><strong id="bld-name-${b.id}"></strong><span id="bld-desc-${b.id}"></span></div><button id="bld-btn-${b.id}" onclick="build('${b.id}')">Build</button></div>`).join("");
+    const techs = G.techs.filter(q => S.unlocked["tech:" + q.id] && !S.tech[q.id]);
+    $("tech-list").replaceChildren(...(techs.length ? techs.map(q => {
+        const d = document.createElement("div"); d.className = "row-item";
+        d.innerHTML = `<div class="row-info"><strong>${esc(q.name)}</strong><span>${esc(q.desc || "")} Cost: ${esc(costStr(q.cost))}</span></div><button id="tech-btn-${q.id}" onclick="research('${q.id}')">Research</button>`;
+        return d;
+    }) : [Object.assign(document.createElement("span"), { className: "hint", textContent: "Nothing to research right now. More appears as you build." })]));
     renderDynamic();
 }
 
@@ -340,8 +350,8 @@ function renderMap() { // info line and buttons, then the canvas
     const canEdit = !mv && t && t.b && t.b !== "center";
     let msg = mv ? `Tap one of your empty tiles to move ${bOf(S.own[placing].b).name} (costs ${costStr(moveCost(bOf(S.own[placing].b)))}).` : "Drag to pan, pinch or use +/- to zoom. Tap a tile to inspect it; claim tiles next to your land.";
     if (!mv && xy) {
-        const tid = terrainAt(xy[0], xy[1]), d = G.deposits.find(q => dterr(q).includes(tid));
-        msg = `${tid} (${xy[0]}, ${xy[1]})${d ? ` · ${tileCap(d, xy[0], xy[1])} ${d.resource}` : ""} · ${t ? (t.b ? (t.b === "center" ? "town centre" : bOf(t.b).name) : "yours, empty") : claimable(xy[0], xy[1]) ? "next to your land" : "out of reach"}`;
+        const tid = terrainAt(xy[0], xy[1]), ds = G.deposits.filter(q => dterr(q).includes(tid));
+        msg = `${tid} (${xy[0]}, ${xy[1]})${ds.map(d => ` · ${tileCap(d, xy[0], xy[1])} ${d.name.toLowerCase()}`).join("")} · ${t ? (t.b ? (t.b === "center" ? "town centre" : bOf(t.b).name) : "yours, empty") : claimable(xy[0], xy[1]) ? "next to your land" : "out of reach"}`;
     }
     $("tile-info").textContent = msg;
     cb.style.display = !mv && xy && !t && claimable(xy[0], xy[1]) ? "" : "none";
@@ -417,7 +427,7 @@ function renderAlert(R) { // warn before the village starves
 }
 function renderGoals() { // the locked things closest to unlocking
     const need = [];
-    [["res", G.resources, "resource"], ["job", G.jobs, "role"], ["bld", G.buildings, "structure"]].forEach(([k, list, label]) =>
+    [["res", G.resources, "resource"], ["job", G.jobs, "role"], ["bld", G.buildings, "structure"], ["tech", G.techs, "technology"]].forEach(([k, list, label]) =>
         list.forEach(x => { if (!S.unlocked[k + ":" + x.id]) need.push({ x, label, p: prog(x.requires) }); }));
     need.sort((a, b) => b.p - a.p);
     $("goals").replaceChildren(...(need.length ? need.slice(0, 4).map(n => {
@@ -443,6 +453,8 @@ function renderDynamic() {
         set("dep-" + d.id, `${Math.floor(s.amt)} / ${s.cap} ${d.resource} · ${y} · hauling ${Math.round(hl.eff * 100)}%, avg ${hl.avg.toFixed(1)} tiles`);
     });
     renderAlert(R); renderGoals();
+    set("tech-count", `${Object.keys(S.tech).length} / ${G.techs.length} known`);
+    G.techs.forEach(q => { const b = $("tech-btn-" + q.id); if (b) b.disabled = !afford(q.cost); });
     const free = freeTiles();
     set("land-counter", `${ownedCount()} tiles owned · ${free} free`);
     set("seed-hint", `World seed ${S.seed}. Claim tiles next to your land (pricier as you grow) and build on them. Structures are placed automatically; select one on the map to move or demolish it. Depots near deposits cut hauling loss.`);
@@ -573,7 +585,7 @@ async function fetchFresh(u) { // revalidate with the server; use the cached cop
 
 async function init() {
     G = await (await fetchFresh("gamedata.json")).json();
-    G.resources.forEach(r => RES[r.id] = r); G.deposits.forEach(d => DEP[d.id] = d); G.map.terrain.forEach(t => TD[t.id] = t);
+    G.techs = G.techs || []; G.resources.forEach(r => RES[r.id] = r); G.deposits.forEach(d => DEP[d.id] = d); G.map.terrain.forEach(t => TD[t.id] = t);
     document.title = G.meta.title; $("game-h1").textContent = G.meta.title;
     S = loadLocal();
     if (S) { ensure(); recenter(); } else startNew(randSeed());

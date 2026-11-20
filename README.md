@@ -16,6 +16,8 @@ Status: early (v0.6). The engine is stable enough to play, but the balance has h
 - **Deposits live on tiles.** Forests regrow, hills and clay banks don't. Cutting wood faster than the forest regrows empties it.
 - **Fishing:** a Fishing Hut must stand next to water and gives 2 fisher slots. Fish come from water tiles you have claimed (claiming water is allowed, building on it isn't), and they regrow.
 - **Hauling matters.** Gatherers deliver less the further their deposit tiles are from a depot (your town centre, or a Storehouse). The Land panel shows the current hauling percentage for each deposit.
+- **Research:** a Library (unlocked by the Writing tech) gives scholar slots; scholars make knowledge, and knowledge plus goods buys technologies. Techs unlock new structures and give permanent boosts. Techs show up in the Research panel as their requirements are met.
+- **Hunting and weaving:** Hunting Lodges stand in forests and hunters draw on wild game. Flax fields and looms turn flax into cloth, which Townhouses and some techs need.
 - **Farms** need plain tiles and give farmer slots (3 per farm). Farmers out-produce foragers, so farms are how food scales.
 - **Finite deposits** (stone, clay, iron) give full output until they run out; regrowing ones (forests) yield less as they thin. The Land panel shows which, plus how long a finite one will last.
 - **New Run** takes an optional seed from the box in the footer (tap twice to confirm). The same seed gives the same map on every device.

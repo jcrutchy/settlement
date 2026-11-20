@@ -1,14 +1,16 @@
 "use strict";
 const $ = id => document.getElementById(id), DRAFT = "settlement_builder_draft";
-const SING = { resources: "resource", jobs: "job", buildings: "building", deposits: "deposit" };
+const SING = { resources: "resource", jobs: "job", buildings: "building", deposits: "deposit", techs: "tech" };
 // field: [key, type, optional?, referenced list]
 const FIELDS = {
     resources: [["id", "id"], ["name", "text"], ["icon", "text"], ["cap", "num"], ["initial", "num", 1], ["spoil", "num", 1], ["manual", "bool", 1], ["manualDeposit", "ref", 1, "deposits"], ["requires", "cond", 1]],
     jobs: [["id", "id"], ["name", "text"], ["outputs", "map", 0, "resources"], ["inputs", "map", 1, "resources"], ["deposit", "ref", 1, "deposits"], ["slots", "slots", 1], ["requires", "cond", 1]],
     buildings: [["id", "id"], ["name", "text"], ["icon", "text"], ["desc", "text", 1], ["cost", "map", 0, "resources"], ["uses", "num"], ["growth", "growth", 1], ["terrain", "csv", 1], ["near", "csv", 1], ["effects", "effects"], ["requires", "cond", 1]],
+    techs: [["id", "id"], ["name", "text"], ["desc", "text", 1], ["cost", "map", 0, "resources"], ["requires", "cond", 1], ["effects", "effects"]],
     deposits: [["id", "id"], ["name", "text"], ["resource", "ref", 0, "resources"], ["terrain", "csv"], ["perTile", "num"], ["variance", "num"], ["regrow", "num"]]
 };
 const NEW = {
+    techs: { name: "New tech", cost: {}, effects: [] },
     resources: { name: "New resource", icon: "❔", cap: 100 },
     jobs: { name: "New job", outputs: {} },
     buildings: { name: "New building", cost: {}, uses: 1, effects: [] },
@@ -46,21 +48,21 @@ function mapEd(obj, key, list, opt) { // { resourceId: number }
 
 function condEd(obj) { // unlock rule: flat list of conditions joined by all/any; nested rules fall back to JSON
     const c = obj.requires;
-    const flat = x => !x || (x.all || x.any || [x]).every(t => t && !t.all && !t.any && (t.resource !== undefined || t.building !== undefined));
+    const flat = x => !x || (x.all || x.any || [x]).every(t => t && !t.all && !t.any && (t.resource !== undefined || t.building !== undefined || t.tech !== undefined));
     if (!flat(c)) {
         const t = h("textarea", { rows: 3, value: JSON.stringify(c) });
         t.onchange = () => { try { obj.requires = JSON.parse(t.value); t.classList.remove("bad"); changed(); } catch (e) { t.classList.add("bad"); } };
         return h("div", {}, h("span", { class: "hint", textContent: "Nested rule: edit as JSON" }), t);
     }
     const box = h("div"); let mode = c && c.any ? "any" : "all";
-    const T = !c ? [] : (c.all || c.any || [c]).map(t => t.resource !== undefined ? { kind: "resource", id: t.resource, gte: t.gte } : { kind: "building", id: t.building, gte: t.gte });
-    const listOf = k => ids(k === "resource" ? "resources" : "buildings");
-    const commit = () => { const L = T.map(t => ({ [t.kind]: t.id, gte: t.gte ?? 0 })); if (!L.length) delete obj.requires; else obj.requires = L.length === 1 ? L[0] : { [mode]: L }; changed(); };
+    const T = !c ? [] : (c.all || c.any || [c]).map(t => t.resource !== undefined ? { kind: "resource", id: t.resource, gte: t.gte } : t.tech !== undefined ? { kind: "tech", id: t.tech } : { kind: "building", id: t.building, gte: t.gte });
+    const listOf = k => ids({ resource: "resources", building: "buildings", tech: "techs" }[k]);
+    const commit = () => { const L = T.map(t => t.kind === "tech" ? { tech: t.id } : { [t.kind]: t.id, gte: t.gte ?? 0 }); if (!L.length) delete obj.requires; else obj.requires = L.length === 1 ? L[0] : { [mode]: L }; changed(); };
     const draw = () => box.replaceChildren(...[
         T.length > 1 ? h("div", { class: "ed-row" }, "Unlock when", sel(["all", "any"], mode, v => { mode = v; commit(); }), "of:") : null,
         ...T.map((t, i) => h("div", { class: "ed-row" },
-            sel(["resource", "building"], t.kind, v => { t.kind = v; t.id = listOf(v)[0] || ""; commit(); draw(); }),
-            sel(listOf(t.kind), t.id, v => { t.id = v; commit(); }), "≥", numIn(t.gte, v => { t.gte = v; commit(); }),
+            sel(["resource", "building", "tech"], t.kind, v => { t.kind = v; t.id = listOf(v)[0] || ""; commit(); draw(); }),
+            sel(listOf(t.kind), t.id, v => { t.id = v; commit(); }), ...(t.kind === "tech" ? [] : ["≥", numIn(t.gte, v => { t.gte = v; commit(); })]),
             h("button", { onclick: () => { T.splice(i, 1); commit(); draw(); } }, "✕"))),
         h("button", { class: "btn-subtle", onclick: () => { T.push({ kind: "resource", id: ids("resources")[0] || "", gte: 1 }); commit(); draw(); } }, "+ condition")
     ].filter(Boolean));
@@ -208,7 +210,7 @@ function ser(v, ind, depth) { // pretty-printer that keeps small objects on one 
 const exportText = () => ser(D, 0, 0) + "\n";
 
 function load(data) {
-    D = data; ["resources", "jobs", "buildings", "deposits"].forEach(k => D[k] ??= []);
+    D = data; ["resources", "jobs", "buildings", "deposits", "techs"].forEach(k => D[k] ??= []);
     D.buildings.forEach(b => b.effects ??= []); render();
 }
 

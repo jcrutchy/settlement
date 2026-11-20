@@ -1,6 +1,6 @@
 "use strict";
 const $ = id => document.getElementById(id), NS = "http://www.w3.org/2000/svg", DRAFT = "settlement_builder_draft";
-const KIND = { resource: ["R:", "#d97706"], job: ["J:", "#60a5fa"], building: ["B:", "#34d399"], deposit: ["D:", "#8b949e"] };
+const KIND = { resource: ["R:", "#d97706"], job: ["J:", "#60a5fa"], building: ["B:", "#34d399"], deposit: ["D:", "#8b949e"], tech: ["T:", "#a78bfa"] };
 const EDGE = { unlock: ["#d97706", "5 4"], cost: ["#f87171", ""], flow: ["#34d399", ""], source: ["#8b949e", "2 3"] };
 const W = 140, H = 30, GX = 28, GY = 10;
 let G, N, E, els, sel = null;
@@ -14,20 +14,21 @@ const condRefs = (c, o = []) => {
     if (!c) return o;
     (c.all || c.any || []).forEach(x => condRefs(x, o));
     if (c.resource !== undefined) o.push("R:" + c.resource);
+    if (c.tech !== undefined) o.push("T:" + c.tech);
     if (c.building !== undefined) o.push("B:" + c.building);
     return o;
 };
-const condText = c => !c ? "" : c.all ? c.all.map(condText).join(" and ") : c.any ? "(" + c.any.map(condText).join(" or ") + ")" : `${c.resource ?? c.building} ≥ ${c.gte}`;
+const condText = c => !c ? "" : c.all ? c.all.map(condText).join(" and ") : c.any ? "(" + c.any.map(condText).join(" or ") + ")" : c.tech !== undefined ? "research " + c.tech : `${c.resource ?? c.building} ≥ ${c.gte}`;
 const mapText = m => Object.entries(m || {}).map(([k, v]) => `${v} ${k}`).join(", ");
 
 function build() {
     N = {}; E = [];
-    for (const kind in KIND) G[kind === "resource" ? "resources" : kind + "s"].forEach((x, i) => N[KIND[kind][0] + x.id] = { key: KIND[kind][0] + x.id, kind, item: x, order: i, depth: 0 });
+    for (const kind in KIND) (G[kind === "resource" ? "resources" : kind + "s"] || []).forEach((x, i) => N[KIND[kind][0] + x.id] = { key: KIND[kind][0] + x.id, kind, item: x, order: i, depth: 0 });
     const edge = (a, b, t) => { if (N[a] && N[b]) E.push({ a, b, t }); };
     Object.values(N).forEach(n => {
         const x = n.item;
         condRefs(x.requires).forEach(r => edge(r, n.key, "unlock"));
-        if (n.kind === "building") Object.keys(x.cost || {}).forEach(k => edge("R:" + k, n.key, "cost"));
+        if (n.kind === "building" || n.kind === "tech") Object.keys(x.cost || {}).forEach(k => edge("R:" + k, n.key, "cost"));
         if (n.kind === "job") {
             Object.keys(x.inputs || {}).forEach(k => edge("R:" + k, n.key, "flow"));
             Object.keys(x.outputs || {}).forEach(k => edge(n.key, "R:" + k, "flow"));
@@ -45,7 +46,7 @@ function build() {
 function describe(n) {
     const x = n.item, p = [`${x.name || x.id} (${n.kind})`];
     if (x.requires) p.push("unlocks when " + condText(x.requires));
-    if (n.kind === "building") { p.push("cost " + mapText(x.cost)); (x.effects || []).forEach(e => p.push(`${e.type} ${e.resource || ""} +${e.value}`.replace("  ", " "))); }
+    if (n.kind === "building" || n.kind === "tech") { p.push("cost " + mapText(x.cost)); (x.effects || []).forEach(e => p.push(`${e.type} ${e.resource || ""} +${e.value}`.replace("  ", " "))); }
     if (n.kind === "job") p.push((x.inputs ? mapText(x.inputs) + " → " : "") + mapText(x.outputs) + " per second");
     if (n.kind === "resource") { p.push("capacity " + x.cap); if (x.manual) p.push("gatherable by hand"); }
     if (n.kind === "deposit") p.push(`${x.perTile} ${x.resource} per ${x.terrain} tile, ${x.regrow ? "regrows" : "finite"}`);
@@ -72,7 +73,7 @@ function select(k) {
 
 function render() {
     build();
-    const lanes = ["deposit", "resource", "job", "building"], LW = W + GX, TOP = 34;
+    const lanes = ["deposit", "resource", "job", "building", "tech"], LW = W + GX, TOP = 34;
     const cell = {}; // "kind|depth" -> nodes in that lane at that tier
     Object.values(N).forEach(n => (cell[n.kind + "|" + n.depth] = cell[n.kind + "|" + n.depth] || []).push(n));
     Object.values(cell).forEach(c => c.sort((p, q) => p.order - q.order));

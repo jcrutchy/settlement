@@ -8,11 +8,11 @@
         const warn = (where, msg) => out.push({ level: "warn", where, msg });
         const isNum = (v, min) => typeof v === "number" && isFinite(v) && v >= (min === undefined ? 0 : min);
         const list = k => Array.isArray(G[k]) ? G[k] : (err("data", `"${k}" must be an array`), []);
-        const resources = list("resources"), jobs = list("jobs"), buildings = list("buildings"), deposits = list("deposits");
+        const resources = list("resources"), jobs = list("jobs"), buildings = list("buildings"), deposits = list("deposits"), techs = G.techs === undefined ? [] : list("techs");
 
         // ids: present and unique
         const ids = {};
-        [["resources", resources], ["jobs", jobs], ["buildings", buildings], ["deposits", deposits]].forEach(([k, arr]) => {
+        [["resources", resources], ["jobs", jobs], ["buildings", buildings], ["deposits", deposits], ["techs", techs]].forEach(([k, arr]) => {
             ids[k] = new Set();
             arr.forEach((x, i) => {
                 if (!x.id || typeof x.id !== "string") return err(`${k}[${i}]`, "missing string id");
@@ -25,12 +25,13 @@
         const hasRes = id => ids.resources.has(id);
 
         // conditions (requires): shape + references
-        const refB = new Set();
+        const refB = new Set(), refT = new Set();
         const walk = (c, where) => {
             if (c === undefined) return;
             if (!c || typeof c !== "object") return err(where, "requires must be an object");
             if (c.all || c.any) { const a = c.all || c.any; Array.isArray(a) ? a.forEach(x => walk(x, where)) : err(where, "all/any must be an array"); }
             else if (c.resource !== undefined) { if (!hasRes(c.resource)) err(where, `requires unknown resource "${c.resource}"`); if (!isNum(c.gte)) err(where, "requires needs a numeric gte"); }
+            else if (c.tech !== undefined) { if (!ids.techs.has(c.tech)) err(where, `requires unknown tech "${c.tech}"`); else refT.add(c.tech); }
             else if (c.building !== undefined) { if (!ids.buildings.has(c.building)) err(where, `requires unknown building "${c.building}"`); else refB.add(c.building); if (!isNum(c.gte)) err(where, "requires needs a numeric gte"); }
             else err(where, "unknown requires shape (use resource/building + gte, or all/any)");
         };
@@ -104,6 +105,19 @@
             });
         });
 
+        // techs: cost, requires and effects
+        techs.forEach(q => {
+            const w = `tech "${q.id}"`;
+            checkMap(q.cost, w, "cost"); walk(q.requires, w);
+            if (!Array.isArray(q.effects)) return err(w, "effects must be an array (use [] for none)");
+            q.effects.forEach(e => {
+                if (!isNum(e.value, 1e-12)) err(w, "effect value must be a positive number");
+                if (e.type === "housing") return;
+                if (!["capacity", "outputMult", "preserve"].includes(e.type)) return err(w, `effect type "${e.type}" is not supported on techs (housing, capacity, outputMult, preserve)`);
+                if (!(e.type === "capacity" && e.resource === "*") && !hasRes(e.resource)) err(w, `${e.type} effect references unknown resource "${e.resource}"`);
+            });
+        });
+
         // population + land
         if (!G.pop || !G.pop.needs) err("pop", "missing pop.needs"); else checkMap(G.pop.needs, "pop", "needs");
         if (G.pop) ["growthRate", "growthFoodMin", "starveRate"].forEach(k => { if (!isNum(G.pop[k])) err("pop", `${k} must be a number`); });
@@ -131,14 +145,16 @@
         if (!G.meta) err("meta", "missing meta block");
 
         // reachability: what can a player ever obtain, starting from nothing?
-        const resOk = new Set(), jobOk = new Set(), bldOk = new Set();
-        const ok = c => !c || (c.all ? c.all.every(ok) : c.any ? c.any.some(ok) : c.resource !== undefined ? resOk.has(c.resource) : c.building !== undefined ? bldOk.has(c.building) : false);
+        const resOk = new Set(), jobOk = new Set(), bldOk = new Set(), techOk = new Set();
+        const ok = c => !c || (c.all ? c.all.every(ok) : c.any ? c.any.some(ok) : c.resource !== undefined ? resOk.has(c.resource) : c.building !== undefined ? bldOk.has(c.building) : c.tech !== undefined ? techOk.has(c.tech) : false);
         for (let ch = true; ch;) {
             ch = false;
             jobs.forEach(j => { if (!jobOk.has(j.id) && ok(j.requires) && (!j.slots || bldOk.has(j.slots.building)) && Object.keys(j.inputs || {}).every(k => resOk.has(k))) { jobOk.add(j.id); ch = true; } });
             resources.forEach(r => { if (!resOk.has(r.id) && ok(r.requires) && (r.manual || jobs.some(j => jobOk.has(j.id) && r.id in (j.outputs || {})))) { resOk.add(r.id); ch = true; } });
+            techs.forEach(q => { if (!techOk.has(q.id) && ok(q.requires) && Object.keys(q.cost || {}).every(k => resOk.has(k))) { techOk.add(q.id); ch = true; } });
             buildings.forEach(b => { if (!bldOk.has(b.id) && ok(b.requires) && Object.keys(b.cost || {}).every(k => resOk.has(k))) { bldOk.add(b.id); ch = true; } });
         }
+        techs.forEach(q => { if (!techOk.has(q.id)) err(`tech "${q.id}"`, "unreachable: its requirements or cost can never be met"); });
         resources.forEach(r => { if (!resOk.has(r.id)) err(`resource "${r.id}"`, "unreachable: nothing can ever produce it or its unlock is unmet"); });
         jobs.forEach(j => { if (!jobOk.has(j.id)) err(`job "${j.id}"`, "unreachable: its unlock or inputs can never be met"); });
         buildings.forEach(b => { if (!bldOk.has(b.id)) err(`building "${b.id}"`, "unreachable: its unlock or cost can never be met"); });
@@ -148,6 +164,8 @@
         const used = new Set(Object.keys((G.pop && G.pop.needs) || {}).concat(Object.keys((L && L.cost) || {})));
         jobs.forEach(j => Object.keys(j.inputs || {}).forEach(k => used.add(k)));
         buildings.forEach(b => Object.keys(b.cost || {}).forEach(k => used.add(k)));
+        techs.forEach(q => Object.keys(q.cost || {}).forEach(k => used.add(k)));
+        techs.forEach(q => { if (!(q.effects || []).length && !refT.has(q.id)) warn(`tech "${q.id}"`, "does nothing: no effects and nothing requires it"); });
         resources.forEach(r => { if (!used.has(r.id)) warn(`resource "${r.id}"`, "dead end: nothing consumes it (no job input, building cost, land cost or population need)"); });
         buildings.forEach(b => { if (!(b.effects || []).length && !refB.has(b.id)) warn(`building "${b.id}"`, "does nothing: no effects and nothing requires it"); });
 
@@ -163,7 +181,7 @@
         buildings.forEach(b => checkCost(b.cost, `building "${b.id}"`, [b.id]));
         if (L) checkCost(L.cost, "land", null);
 
-        out.push({ level: "info", where: "summary", msg: `${resources.length} resources, ${jobs.length} jobs, ${buildings.length} buildings, ${deposits.length} deposits.` });
+        out.push({ level: "info", where: "summary", msg: `${resources.length} resources, ${jobs.length} jobs, ${buildings.length} buildings, ${deposits.length} deposits, ${techs.length} techs.` });
         return out;
     }
 
