@@ -404,7 +404,8 @@ function drawMap() {
     if (!rd) return;
     const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, Hh = cv.clientHeight;
     if (!W) return;
-    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(Hh * dpr); }
+    const bw = Math.round(W * dpr), bh = Math.round(Hh * dpr);
+    if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; } // keep the bitmap in step with the displayed size, or tiles stretch
     const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
     rd.draw({ ctx: c, W, H: Hh, cam, zoom, time: performance.now() / 1000, world: WORLD, opts: optsOf(rd) });
 }

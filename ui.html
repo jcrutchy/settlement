@@ -25,58 +25,63 @@
     </div>
 </header>
 
-<main>
-    <div id="alert" class="alert" style="display:none;"></div>
-    <section id="log-panel" class="panel log-box"></section>
+<div id="alert" class="alert" style="display:none;"></div>
 
-    <section class="panel">
-        <h2>Stockpiles</h2>
-        <div id="resources-list" class="grid-list"></div>
-        <div id="manual-actions" class="button-row" style="margin-top: 12px;"></div>
-    </section>
+<main class="cols">
+    <div class="col col-a">
+        <section class="panel p-stock">
+                <h2>Stockpiles</h2>
+                <div id="resources-list" class="grid-list"></div>
+                <div id="manual-actions" class="button-row" style="margin-top: 12px;"></div>
+            </section>
 
-    <section class="panel">
-        <div class="section-header">
-            <h2>Land</h2>
-            <span id="land-counter" class="badge">0 / 0 plots</span>
-        </div>
-        <p class="hint" id="seed-hint"></p>
-        <div class="mapwrap">
-            <canvas id="map"></canvas>
-            <div class="mapbtns"><button id="zoom-in">+</button><button id="zoom-out">&minus;</button><button id="recenter" title="Back to town">&#8982;</button></div>
-        </div>
-        <div class="button-row" style="margin: 10px 0; align-items: center;">
-            <button id="claim-tile-btn" style="display:none;">Claim tile</button>
-            <button id="move-btn" style="display:none;">Move</button>
-            <button id="demolish-btn" class="btn-danger" style="display:none;">Demolish</button>
-            <span id="tile-info" class="hint" style="margin: 0;"></span>
-        </div>
-        <div id="deposits-list" class="stack-list"></div>
-    </section>
+        <section class="panel p-pop" id="pop-section">
+                <div class="section-header">
+                    <h2>Population</h2>
+                    <span id="pop-counter" class="badge">0 / 0</span>
+                </div>
+                <p class="hint">Idle villagers: <strong id="idle-pop">0</strong> <span id="needs-hint"></span></p>
+                <div id="jobs-list" class="stack-list"></div>
+            </section>
+    </div>
+    <div class="col col-b">
+        <section class="panel p-land">
+                <div class="section-header">
+                    <h2>Land</h2>
+                    <span id="land-counter" class="badge">0 / 0 plots</span>
+                </div>
+                <p class="hint" id="seed-hint"></p>
+                <div class="mapwrap">
+                    <canvas id="map"></canvas>
+                    <div class="mapbtns"><button id="zoom-in">+</button><button id="zoom-out">&minus;</button><button id="recenter" title="Back to town">&#8982;</button></div>
+                </div>
+                <div class="button-row" style="margin: 10px 0; align-items: center;">
+                    <button id="claim-tile-btn" style="display:none;">Claim tile</button>
+                    <button id="move-btn" style="display:none;">Move</button>
+                    <button id="demolish-btn" class="btn-danger" style="display:none;">Demolish</button>
+                    <span id="tile-info" class="hint" style="margin: 0;"></span>
+                </div>
+                <div id="deposits-list" class="stack-list"></div>
+            </section>
+    </div>
+    <div class="col col-c">
+        <section id="log-panel" class="panel log-box p-log"></section>
 
-    <section class="panel" id="pop-section">
-        <div class="section-header">
-            <h2>Population</h2>
-            <span id="pop-counter" class="badge">0 / 0</span>
-        </div>
-        <p class="hint">Idle villagers: <strong id="idle-pop">0</strong> <span id="needs-hint"></span></p>
-        <div id="jobs-list" class="stack-list"></div>
-    </section>
+        <section class="panel p-goals">
+                <h2>Next unlocks</h2>
+                <div id="goals" class="stack-list"></div>
+            </section>
 
-    <section class="panel">
-        <h2>Next unlocks</h2>
-        <div id="goals" class="stack-list"></div>
-    </section>
+        <section class="panel p-research">
+                <div class="section-header"><h2>Research</h2><span id="tech-count" class="badge">0 known</span></div>
+                <div id="tech-list" class="stack-list"></div>
+            </section>
 
-    <section class="panel">
-        <div class="section-header"><h2>Research</h2><span id="tech-count" class="badge">0 known</span></div>
-        <div id="tech-list" class="stack-list"></div>
-    </section>
-
-    <section class="panel">
-        <h2>Structures</h2>
-        <div id="buildings-list" class="stack-list"></div>
-    </section>
+        <section class="panel p-build">
+                <h2>Structures</h2>
+                <div id="buildings-list" class="stack-list"></div>
+            </section>
+    </div>
 </main>
 
 <footer>

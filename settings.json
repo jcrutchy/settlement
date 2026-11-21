@@ -1,7 +1,8 @@
 {
   "available": [
-    ["classic", "Classic (flat colours and emoji)"]
+    ["classic", "Classic (flat colours and emoji)"],
+    ["painted", "Painted (terrain, water, trees, buildings)"]
   ],
   "render": { "renderer": "classic", "options": {} },
-  "layout": { "mapHeightVh": 55 }
+  "layout": { "mapHeightVh": 60 }
 }

@@ -9,9 +9,9 @@
       { "terrain": ["lake", "river", "ocean"], "radius": 7 }, { "terrain": ["claybank"], "radius": 10 }, { "terrain": ["orebed"], "radius": 14 }
     ] },
     "terrain": [
-      { "id": "ocean", "icon": "🌊", "color": "#1d4e89", "buildable": false, "gen": { "elev": [0, 0.37], "cont": [0, 0.45] } },
-      { "id": "lake", "icon": "💧", "color": "#2b6cb0", "buildable": false, "gen": { "elev": [0, 0.37] } },
-      { "id": "river", "icon": "〰️", "color": "#3b82c4", "buildable": false, "gen": { "ridge": { "scale": 28, "width": 0.007 } } },
+      { "id": "ocean", "icon": "🌊", "color": "#1d4e89", "buildable": false, "water": true, "gen": { "elev": [0, 0.37], "cont": [0, 0.45] } },
+      { "id": "lake", "icon": "💧", "color": "#2b6cb0", "buildable": false, "water": true, "gen": { "elev": [0, 0.37] } },
+      { "id": "river", "icon": "〰️", "color": "#3b82c4", "buildable": false, "water": true, "gen": { "ridge": { "scale": 28, "width": 0.007 } } },
       { "id": "orebed", "icon": "🔶", "color": "#7c4a1e", "gen": { "elev": [0.6, 1], "blob": { "scale": 5, "min": 0.66 } } },
       { "id": "hills", "icon": "⛰️", "color": "#6b7280", "gen": { "elev": [0.6, 1] } },
       { "id": "claybank", "icon": "🟫", "color": "#a0623a", "gen": { "elev": [0.37, 0.45], "blob": { "scale": 4, "min": 0.62 } } },

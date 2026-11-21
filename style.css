@@ -177,3 +177,18 @@ footer { display: flex; justify-content: space-between; margin-top: 20px; }
 .mapwrap canvas { width: 100%; height: min(55vh, 440px); display: block; border: 1px solid var(--border); border-radius: 6px; touch-action: none; cursor: grab; background: #0b0d10; }
 .mapbtns { position: absolute; right: 8px; top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .mapbtns button { width: 34px; height: 34px; padding: 0; background: rgba(24, 27, 34, 0.9); }
+
+/* game layout: one column on phones; two columns on wide screens; three on very wide ones */
+.cols { display: flex; flex-direction: column; }
+.col { display: contents; }
+.p-log { order: 1; } .p-stock { order: 2; } .p-land { order: 3; } .p-pop { order: 4; } .p-goals { order: 5; } .p-research { order: 6; } .p-build { order: 7; }
+@media (min-width: 1000px) {
+    body:has(.cols) { max-width: none; padding: 16px 24px; }
+    .cols { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); grid-template-areas: "map a" "map c"; column-gap: 18px; align-items: start; }
+    .col { display: flex; flex-direction: column; min-width: 0; }
+    .col-a { grid-area: a; } .col-b { grid-area: map; align-self: stretch; } .col-c { grid-area: c; }
+    .col-b > .panel { position: sticky; top: 12px; }
+}
+@media (min-width: 1750px) {
+    .cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1.7fr) minmax(0, 1fr); grid-template-areas: "a map c"; }
+}

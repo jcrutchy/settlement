@@ -48,7 +48,7 @@ The token and gist ID are stored only in that browser's local storage. Each save
 
 The **Display** button in the game header picks the graphics (renderer) and map height, and the choice is saved per browser. `settings.json` holds the defaults and the list of available renderers.
 
-Rendering is pluggable. A renderer is a small script, `render-<id>.js`, that registers an object on `window.SettlementRenderers` with a `draw()` function, an optional `options` list (shown as checkboxes in the Display panel) and an `animated` flag. The game handles panning, zooming and tapping, and hands the renderer a read-only view of the world (terrain, owned tiles, buildings, selection). `render-classic.js` is the reference implementation and documents the contract. To add one, create the file and add it to `available` in `settings.json`.
+Rendering is pluggable. A renderer is a small script, `render-<id>.js`, that registers an object on `window.SettlementRenderers` with a `draw()` function, an optional `options` list (shown as checkboxes in the Display panel) and an `animated` flag. The game handles panning, zooming and tapping, and hands the renderer a read-only view of the world (terrain, owned tiles, buildings, selection). `render-classic.js` is the reference implementation and documents the contract. `render-painted.js` draws shaded ground, soft shorelines, trees, mountains, ore, fields and buildings procedurally (no image files). To add one, create the file and add it to `available` in `settings.json`.
 
 ## Stats
 
