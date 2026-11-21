@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id), NS = "http://www.w3.org/2000/svg", DRAFT = "settlement_builder_draft";
 const KIND = { resource: ["R:", "#d97706"], job: ["J:", "#60a5fa"], building: ["B:", "#34d399"], deposit: ["D:", "#8b949e"], tech: ["T:", "#a78bfa"] };
 const EDGE = { unlock: ["#d97706", "5 4"], cost: ["#f87171", ""], flow: ["#34d399", ""], source: ["#8b949e", "2 3"] };
-const W = 140, H = 30, GX = 28, GY = 10;
+const W = 140, H = 30, GX = 28, GY = 6;
 let G, N, E, els, sel = null;
 
 function s(tag, a = {}, ...kids) {
@@ -79,7 +79,7 @@ function render() {
     Object.values(cell).forEach(c => c.sort((p, q) => p.order - q.order));
     const maxDepth = Math.max(0, ...Object.values(N).map(n => n.depth)), bandY = [];
     let y = TOP;
-    for (let d = 0; d <= maxDepth; d++) { bandY[d] = y; y += Math.max(1, ...lanes.map(k => (cell[k + "|" + d] || []).length)) * (H + GY) + 20; }
+    for (let d = 0; d <= maxDepth; d++) { bandY[d] = y; y += Math.max(1, ...lanes.map(k => (cell[k + "|" + d] || []).length)) * (H + GY) + 12; }
     const width = lanes.length * LW + 20, height = y;
     Object.values(cell).forEach(c => c.forEach((n, r) => { n.x = 10 + lanes.indexOf(n.kind) * LW + GX / 2; n.y = bandY[n.depth] + r * (H + GY); }));
     els = { n: {}, e: [] };

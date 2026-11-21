@@ -3,7 +3,12 @@
     <div class="title-bar">
         <h1 id="game-h1">SETTLEMENT</h1>
         <span><a href="stats.html" class="muted">stats</a> · <a href="tree.html" class="muted">tech tree</a></span>
-        <button id="toggle-sync-btn" class="btn-subtle">⚙ Cloud Sync</button>
+        <span><button id="toggle-display-btn" class="btn-subtle">Display</button> <button id="toggle-sync-btn" class="btn-subtle">⚙ Cloud Sync</button></span>
+    </div>
+    <div id="display-panel" class="panel hidden">
+        <h3>Display</h3>
+        <p class="hint">Saved in this browser.</p>
+        <div id="display-body"></div>
     </div>
     <div id="sync-panel" class="panel hidden">
         <h3>GitHub Secret Gist Sync</h3>

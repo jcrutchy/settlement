@@ -44,6 +44,12 @@ The token and gist ID are stored only in that browser's local storage. Each save
 | `tree.html`, `tree.js` | Read-only tech tree: what unlocks, costs and feeds what |
 | `stats.html`, `stats.js` | Live charts of stockpiles, rates, population and deposits (see below) |
 
+## Display and graphics
+
+The **Display** button in the game header picks the graphics (renderer) and map height, and the choice is saved per browser. `settings.json` holds the defaults and the list of available renderers.
+
+Rendering is pluggable. A renderer is a small script, `render-<id>.js`, that registers an object on `window.SettlementRenderers` with a `draw()` function, an optional `options` list (shown as checkboxes in the Display panel) and an `animated` flag. The game handles panning, zooming and tapping, and hands the renderer a read-only view of the world (terrain, owned tiles, buildings, selection). `render-classic.js` is the reference implementation and documents the contract. To add one, create the file and add it to `available` in `settings.json`.
+
 ## Stats
 
 The game records a history of stockpile levels, production and consumption rates, population and deposits, and `stats.html` charts it. Open `stats.html` in a second window or on a second monitor **in the same browser** and it updates live as you play. Ranges run from 10 minutes up to 14 days. Hover or touch a chart to read exact values.

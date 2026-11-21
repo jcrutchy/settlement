@@ -1,0 +1,2184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Settlement — Procedural Map Renderer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #0b0e14;
+      color: #e2e8f0;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .font-mono-code {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #111622;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #283244;
+      border-radius: 3px;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    canvas:active {
+      cursor: grabbing;
+    }
+  </style>
+</head>
+<body class="p-3 sm:p-6">
+
+  <!-- Main Game Panel matching the Settlement dark slate UI -->
+  <div class="w-full max-w-4xl bg-[#131720] border border-[#232a38] rounded-xl shadow-2xl p-4 sm:p-6 transition-all">
+
+    <!-- Header Row -->
+    <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+      <div class="flex flex-wrap items-center gap-2.5">
+        <h1 class="text-xs sm:text-sm font-bold tracking-[0.14em] text-[#94a3b8] uppercase">LAND</h1>
+        <!-- Interactive Style & Layer Toggles -->
+        <div class="flex items-center bg-[#0d1017] border border-[#232a38] rounded-lg p-0.5 text-xs">
+          <button id="btnModePolished" class="px-2.5 py-1 rounded-md font-medium bg-[#253045] text-white shadow-sm transition-colors">
+            Organic Procedural
+          </button>
+          <button id="btnModeFlat" class="px-2.5 py-1 rounded-md font-medium text-[#7d8da6] hover:text-slate-200 transition-colors">
+            Flat Prototype
+          </button>
+        </div>
+        <!-- Re-roll Seed Button -->
+        <button id="btnRerollSeed" title="Generate new deterministic sub-tile variation" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#0d1017] hover:bg-[#1a2130] active:scale-95 border border-[#232a38] text-xs font-medium text-slate-300 transition">
+          <svg class="w-3.5 h-3.5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
+            <path d="M3 3v5h5"></path>
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
+            <path d="M16 16h5v5"></path>
+          </svg>
+          Re-roll Seed
+        </button>
+      </div>
+
+      <!-- Owned Tiles Badge -->
+      <div id="ownedBadge" class="font-mono-code text-xs sm:text-sm bg-[#0d1017] border border-[#262e3d] text-slate-200 px-3 py-1 rounded-lg">
+        38 tiles owned · 6 free
+      </div>
+    </div>
+
+    <!-- Subtitle / Flavor & Instructions -->
+    <p class="text-xs sm:text-[13px] text-[#8492a6] leading-relaxed mb-3">
+      World seed <span id="seedLabel" class="text-slate-300 font-mono-code">450770442</span>. Claim tiles next to your land (pricier as you grow) and build on them. Biomes merge across shared edges, mountains form connected ranges, and village huts naturally cluster.
+    </p>
+
+    <!-- Layer Filter Pills -->
+    <div class="flex flex-wrap items-center gap-1.5 mb-3 text-[11px]">
+      <span class="text-[#64748b] mr-1 uppercase tracking-wider font-semibold">Overlays:</span>
+      <button id="toggleGrid" data-active="true" class="overlay-btn px-2.5 py-1 rounded-md border border-[#2b3548] bg-[#1b2230] text-slate-200 hover:border-slate-500 transition">
+        Subtle Grid
+      </button>
+      <button id="togglePaths" data-active="true" class="overlay-btn px-2.5 py-1 rounded-md border border-[#2b3548] bg-[#1b2230] text-slate-200 hover:border-slate-500 transition">
+        Settlement Paths
+      </button>
+      <button id="toggleDepots" data-active="true" class="overlay-btn px-2.5 py-1 rounded-md border border-[#2b3548] bg-[#1b2230] text-slate-200 hover:border-slate-500 transition">
+        Depot Hauling Links
+      </button>
+      <button id="toggleSmoke" data-active="true" class="overlay-btn px-2.5 py-1 rounded-md border border-[#2b3548] bg-[#1b2230] text-slate-200 hover:border-slate-500 transition">
+        Ambient Motion
+      </button>
+    </div>
+
+    <!-- Map Viewport Container -->
+    <div id="mapContainer" class="relative w-full h-[400px] sm:h-[470px] rounded-lg overflow-hidden border border-[#262f40] bg-[#1a2418] shadow-inner select-none">
+      <canvas id="worldCanvas"></canvas>
+
+      <!-- Floating Zoom & Recenter Controls (Top-Right) -->
+      <div class="absolute top-3 right-3 flex flex-col gap-1.5 z-10">
+        <button id="btnZoomIn" title="Zoom In" class="w-8 h-8 rounded-md bg-[#1e2430]/90 hover:bg-[#2a3344] active:scale-95 border border-[#323d52] text-slate-200 font-semibold text-base flex items-center justify-center shadow-lg backdrop-blur-sm transition">
+          +
+        </button>
+        <button id="btnZoomOut" title="Zoom Out" class="w-8 h-8 rounded-md bg-[#1e2430]/90 hover:bg-[#2a3344] active:scale-95 border border-[#323d52] text-slate-200 font-semibold text-base flex items-center justify-center shadow-lg backdrop-blur-sm transition">
+          &minus;
+        </button>
+        <button id="btnRecenter" title="Recenter Map" class="w-8 h-8 rounded-md bg-[#1e2430]/90 hover:bg-[#2a3344] active:scale-95 border border-[#323d52] text-slate-200 flex items-center justify-center shadow-lg backdrop-blur-sm transition">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Subtle Bottom-Left Compass / Scale Hint -->
+      <div class="absolute bottom-2.5 left-3 pointer-events-none px-2 py-0.5 rounded bg-[#0d1017]/75 border border-white/10 text-[10px] font-mono-code text-slate-300 backdrop-blur-xs">
+        Drag to pan · Scroll to zoom · Click tile to inspect
+      </div>
+    </div>
+
+    <!-- Bottom Action Bar -->
+    <div class="mt-3.5 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <button id="btnClaim" class="px-3.5 py-2 rounded-lg bg-[#232b3a] hover:bg-[#2f3a4e] active:scale-[0.99] disabled:opacity-45 disabled:pointer-events-none border border-[#364259] text-slate-100 text-xs sm:text-sm font-medium shadow-sm transition">
+          Claim (165 wood)
+        </button>
+        <div id="tileStatusText" class="text-xs sm:text-[13px] text-[#94a3b8]">
+          ocean (-9, 16) · 55 fishing grounds · next to your land
+        </div>
+      </div>
+
+      <!-- Quick Toast / Feedback Pill -->
+      <div id="actionFeedback" class="text-xs font-mono-code text-emerald-400 opacity-0 transition-opacity duration-300">
+        Tile claimed!
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    /**
+     * PROCEDURAL SETTLEMENT MAP RENDERER
+     * Zero external images or sprites. All terrain blending, shadows,
+     * vector architecture, foliage, ripples, and smoke are synthesized
+     * deterministically on HTML5 Canvas.
+     */
+    (function () {
+      const canvas = document.getElementById('worldCanvas');
+      const ctx = canvas.getContext('2d');
+      const container = document.getElementById('mapContainer');
+
+      // UI Elements
+      const btnModePolished = document.getElementById('btnModePolished');
+      const btnModeFlat = document.getElementById('btnModeFlat');
+      const btnRerollSeed = document.getElementById('btnRerollSeed');
+      const seedLabel = document.getElementById('seedLabel');
+      const btnClaim = document.getElementById('btnClaim');
+      const tileStatusText = document.getElementById('tileStatusText');
+      const ownedBadge = document.getElementById('ownedBadge');
+      const actionFeedback = document.getElementById('actionFeedback');
+
+      // Render Options State
+      const state = {
+        seed: 450770442,
+        mode: 'polished', // 'polished' | 'flat'
+        showGrid: true,
+        showPaths: true,
+        showDepots: true,
+        showMotion: true,
+        tileSize: 46,
+        zoom: 1.0,
+        panX: 0,
+        panY: 0,
+        isDragging: false,
+        dragMoved: false,
+        lastPointerX: 0,
+        lastPointerY: 0,
+        selected: { col: 11, row: 4 },
+        hovered: null,
+        claimCost: 165,
+        wood: 9999,
+        particles: []
+      };
+
+      const COLS = 20;
+      const ROWS = 14;
+      const ORIGIN_COL = 11;
+      const ORIGIN_ROW = 4;
+
+      // Deterministic Seeded Hash Helpers
+      function hash2D(x, y, salt = 0) {
+        const s = (state.seed + salt) | 0;
+        let h = Math.imul(x ^ s, 374761393) + Math.imul(y ^ (s >> 13), 668265263);
+        h = Math.imul(h ^ (h >>> 13), 1274126177);
+        return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+      }
+
+      function hashSub(x, y, idx) {
+        return hash2D(x * 31 + idx * 17, y * 47 + idx * 29, idx * 1013);
+      }
+
+      const grid = [];
+
+      function initWorld() {
+        const layout = [
+          ['grass','grass','forest','forest','forest','forest','forest','forest','forest','forest','forest','forest','grass','grass','grass','grass','grass','grass','grass','grass'],
+          ['grass','grass','forest','forest','forest','forest','forest','forest','forest','forest','forest','grass','ocean','ocean','ocean','grass','grass','grass','grass','grass'],
+          ['grass','forest','forest','forest','forest','forest','forest','forest','forest','hut','hut','ocean','ocean','ocean','ocean','ocean','dirt','dirt','grass','grass'],
+          ['mineral','forest','river','forest','forest','forest','forest','hut','hut','hut','corn','ocean','ocean','ocean','ocean','ocean','dirt','ocean','grass','grass'],
+          ['hill','hill','hill','river','forest','hut','clay','hut','hut','hut','hut','hut','hut','hut','grass','dirt','dirt','ocean','grass','grass'],
+          ['hill','hill','hill','hill','mineral','river','hut','hut','hut','camp','corn','corn','corn','corn','grass','grass','grass','grass','grass','grass'],
+          ['mineral','mineral','mineral','hill','depot','depot','hut','river','hut','forest','hut','hut','clay','grass','grass','grass','grass','grass','grass','grass'],
+          ['mineral','mineral','mineral','hill','hill','mineral','mineral','forest','hut','river','hut','grass','grass','grass','grass','grass','grass','grass','grass','grass'],
+          ['mineral','mineral','hill','hill','hill','hill','hill','forest','forest','forest','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass'],
+          ['mineral','mineral','hill','hill','hill','hill','hill','forest','forest','forest','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass'],
+          ['mineral','mineral','hill','hill','hill','hill','hill','forest','forest','forest','grass','grass','grass','grass','river','river','river','river','river','river'],
+          ['mineral','mineral','hill','hill','hill','hill','hill','forest','forest','forest','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass'],
+          ['mineral','mineral','mineral','hill','hill','hill','hill','forest','forest','forest','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass'],
+          ['grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass','grass']
+        ];
+
+        const ownedList = [
+          [9,2],[10,2],
+          [7,3],[8,3],[9,3],[10,3],
+          [5,4],[6,4],[7,4],[8,4],[9,4],[10,4],[12,4],[13,4],[14,4],
+          [6,5],[7,5],[8,5],[9,5],[10,5],[11,5],[12,5],[13,5],
+          [3,6],[4,6],[5,6],[6,6],[7,6],[8,6],[9,6],[10,6],[11,6],[12,6],
+          [4,7],[5,7],[8,7],[9,7],[10,7]
+        ];
+        const ownedSet = new Set(ownedList.map(([c, r]) => `${c},${r}`));
+
+        grid.length = 0;
+        state.particles.length = 0;
+
+        for (let r = 0; r < ROWS; r++) {
+          const rowArr = [];
+          for (let c = 0; c < COLS; c++) {
+            let code = layout[r][c];
+            if (r === 4 && c === 11) code = 'ocean';
+            if (r === 4 && c === 12) code = 'hut';
+            if (r === 4 && c === 13) code = 'hut';
+            if (r === 4 && c === 14) code = 'hut';
+
+            let biome = 'grass';
+            let structure = null;
+            let resourceAmount = Math.floor(25 + hash2D(c, r, 11) * 65);
+
+            if (code === 'forest') biome = 'forest';
+            else if (code === 'hill') biome = 'hill';
+            else if (code === 'mineral') biome = 'mineral';
+            else if (code === 'ocean') biome = 'ocean';
+            else if (code === 'river') biome = 'river';
+            else if (code === 'dirt') biome = 'dirt';
+            else if (code === 'hut') { biome = 'grass'; structure = 'hut'; }
+            else if (code === 'corn') { biome = 'grass'; structure = 'corn'; }
+            else if (code === 'clay') { biome = 'grass'; structure = 'clay'; }
+            else if (code === 'depot') { biome = 'hill'; structure = 'depot'; }
+            else if (code === 'camp') { biome = 'grass'; structure = 'camp'; }
+
+            let isOwned = ownedSet.has(`${c},${r}`);
+            if (r === 4 && c === 11) isOwned = false;
+
+            rowArr.push({
+              col: c,
+              row: r,
+              worldX: -9 + (c - ORIGIN_COL),
+              worldY: 16 + (r - ORIGIN_ROW),
+              biome,
+              structure,
+              owned: isOwned,
+              resourceAmount
+            });
+          }
+          grid.push(rowArr);
+        }
+
+        rebuildSmokeParticles();
+      }
+
+      function rebuildSmokeParticles() {
+        state.particles.length = 0;
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const t = grid[r][c];
+            if (t.structure === 'hut' || t.structure === 'depot') {
+              if (hash2D(c, r, 99) > 0.32) {
+                const off = getStructureOffset(t);
+                for (let i = 0; i < 3; i++) {
+                  state.particles.push({
+                    col: c,
+                    row: r,
+                    dx: off.dx,
+                    dy: off.dy,
+                    age: hashSub(c, r, i),
+                    speed: 0.22 + hashSub(c, r, i + 5) * 0.14,
+                    drift: (hashSub(c, r, i + 9) - 0.5) * 0.35
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      function getTile(c, r) {
+        if (r < 0 || r >= ROWS || c < 0 || c >= COLS) return null;
+        return grid[r][c];
+      }
+
+      function isWater(tile) {
+        return Boolean(tile && (tile.biome === 'ocean' || tile.biome === 'river'));
+      }
+
+      function isMountainous(tile) {
+        return Boolean(tile && (tile.biome === 'hill' || tile.biome === 'mineral'));
+      }
+
+      function getStructureOffset(tile) {
+        if (!tile || !tile.structure || tile.structure === 'corn') {
+          return { dx: 0, dy: 0, scale: 1, flip: 1, variant: 0 };
+        }
+        const maxJitter = tile.structure === 'hut' ? 0.18 : 0.10;
+        const jx = (hashSub(tile.col, tile.row, 21) * 2 - 1) * maxJitter * state.tileSize;
+        const jy = (hashSub(tile.col, tile.row, 22) * 2 - 1) * maxJitter * state.tileSize;
+        const scale = tile.structure === 'hut'
+          ? 0.90 + hashSub(tile.col, tile.row, 23) * 0.20
+          : 0.95 + hashSub(tile.col, tile.row, 23) * 0.10;
+        const flip = hashSub(tile.col, tile.row, 24) > 0.5 ? -1 : 1;
+        const variant = Math.floor(hashSub(tile.col, tile.row, 25) * 4);
+        return { dx: jx, dy: jy, scale, flip, variant };
+      }
+
+      function isFrontier(tile) {
+        if (!tile || tile.owned) return false;
+        const dirs = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+        for (const [dc, dr] of dirs) {
+          const n = getTile(tile.col + dc, tile.row + dr);
+          if (n && n.owned) return true;
+        }
+        return false;
+      }
+
+      function countOwned() {
+        let owned = 0;
+        let built = 0;
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (grid[r][c].owned) {
+              owned++;
+              if (grid[r][c].structure) built++;
+            }
+          }
+        }
+        return { owned, free: Math.max(0, owned - built) };
+      }
+
+      function updateHUD() {
+        const { owned, free } = countOwned();
+        ownedBadge.textContent = `${owned} tiles owned · ${free} free`;
+
+        const sel = getTile(state.selected.col, state.selected.row);
+        if (!sel) return;
+
+        const frontier = isFrontier(sel);
+        let desc = `${getBiomeLabel(sel)} (${sel.worldX}, ${sel.worldY})`;
+        if (sel.structure) {
+          desc += ` · ${getStructureLabel(sel.structure)}`;
+        } else {
+          desc += ` · ${sel.resourceAmount} ${getYieldLabel(sel)}`;
+        }
+
+        if (sel.owned) {
+          desc += ` · owned`;
+          btnClaim.disabled = true;
+          btnClaim.textContent = 'Owned';
+        } else if (frontier) {
+          desc += ` · next to your land`;
+          btnClaim.disabled = false;
+          btnClaim.textContent = `Claim (${state.claimCost} wood)`;
+        } else {
+          desc += ` · unexplored frontier`;
+          btnClaim.disabled = true;
+          btnClaim.textContent = `Claim (${state.claimCost} wood)`;
+        }
+
+        tileStatusText.textContent = desc;
+      }
+
+      function getBiomeLabel(tile) {
+        const map = {
+          ocean: 'ocean',
+          river: 'river channel',
+          forest: 'dense woods',
+          hill: 'rocky hills',
+          mineral: 'copper ridge',
+          dirt: 'barren scrub',
+          grass: 'meadow'
+        };
+        return map[tile.biome] || tile.biome;
+      }
+
+      function getYieldLabel(tile) {
+        const map = {
+          ocean: 'fishing grounds',
+          river: 'freshwater fish',
+          forest: 'timber',
+          hill: 'stone',
+          mineral: 'copper ore',
+          dirt: 'clay',
+          grass: 'fertile soil'
+        };
+        return map[tile.biome] || 'resources';
+      }
+
+      function getStructureLabel(st) {
+        const map = {
+          hut: 'timber hut (+2 pop)',
+          corn: 'corn farm (+food)',
+          clay: 'amphora pottery (+goods)',
+          depot: 'hauling depot (-40% haul loss)',
+          camp: 'surveyor camp'
+        };
+        return map[st] || st;
+      }
+
+      function resizeCanvas() {
+        const rect = container.getBoundingClientRect();
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        centerCamera(false);
+      }
+
+      function centerCamera(resetZoom = true) {
+        const rect = container.getBoundingClientRect();
+        if (resetZoom) {
+          state.zoom = Math.max(0.85, Math.min(1.25, rect.width / 820));
+        }
+        const worldW = COLS * state.tileSize * state.zoom;
+        const worldH = ROWS * state.tileSize * state.zoom;
+        state.panX = (rect.width - worldW) * 0.5;
+        state.panY = (rect.height - worldH) * 0.5 + 8;
+      }
+
+      // =========================================================================
+      // RENDERING PIPELINE
+      // =========================================================================
+
+      function render(timeSec) {
+        const rect = container.getBoundingClientRect();
+        const W = rect.width;
+        const H = rect.height;
+
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = state.mode === 'polished' ? '#2c4623' : '#26361e';
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.save();
+        ctx.translate(state.panX, state.panY);
+        ctx.scale(state.zoom, state.zoom);
+
+        if (state.mode === 'flat') {
+          renderFlatPrototype(timeSec);
+        } else {
+          renderProceduralPolished(timeSec);
+        }
+
+        ctx.restore();
+
+        if (state.mode === 'polished') {
+          const grad = ctx.createRadialGradient(
+            W * 0.5, H * 0.5, Math.min(W, H) * 0.34,
+            W * 0.5, H * 0.5, Math.max(W, H) * 0.74
+          );
+          grad.addColorStop(0, 'rgba(10, 14, 20, 0)');
+          grad.addColorStop(1, 'rgba(8, 11, 16, 0.32)');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, W, H);
+        }
+      }
+
+      // -------------------------------------------------------------------------
+      // 8-NEIGHBOR BLOB / RADIUSING HELPER (FOR NON-WATER BIOMES & FARMS)
+      // Avoids diagonal pinch spikes by checking diagonal cells before carving
+      // concave inner fillets.
+      // -------------------------------------------------------------------------
+      function fillOrganicBlobLayer(pred, radius, fillStyle, strokeStyle = null, lineWidth = 0) {
+        const ts = state.tileSize;
+        const r = Math.min(radius, ts * 0.48);
+
+        ctx.save();
+        ctx.fillStyle = fillStyle;
+        if (strokeStyle && lineWidth > 0) {
+          ctx.strokeStyle = strokeStyle;
+          ctx.lineWidth = lineWidth;
+        }
+
+        for (let row = 0; row < ROWS; row++) {
+          for (let col = 0; col < COLS; col++) {
+            const tile = grid[row][col];
+            if (!pred(tile)) continue;
+
+            const x = col * ts;
+            const y = row * ts;
+
+            const nT = pred(getTile(col, row - 1));
+            const nR = pred(getTile(col + 1, row));
+            const nB = pred(getTile(col, row + 1));
+            const nL = pred(getTile(col - 1, row));
+
+            const rTL = (!nT && !nL) ? r : 0;
+            const rTR = (!nT && !nR) ? r : 0;
+            const rBR = (!nB && !nR) ? r : 0;
+            const rBL = (!nB && !nL) ? r : 0;
+
+            ctx.beginPath();
+            ctx.roundRect(x - 0.35, y - 0.35, ts + 0.7, ts + 0.7, [rTL, rTR, rBR, rBL]);
+            ctx.fill();
+          }
+        }
+
+        for (let row = 0; row < ROWS; row++) {
+          for (let col = 0; col < COLS; col++) {
+            const tile = grid[row][col];
+            if (pred(tile)) continue;
+
+            const x = col * ts;
+            const y = row * ts;
+
+            const nT = pred(getTile(col, row - 1));
+            const nR = pred(getTile(col + 1, row));
+            const nB = pred(getTile(col, row + 1));
+            const nL = pred(getTile(col - 1, row));
+
+            const dTL = pred(getTile(col - 1, row - 1));
+            const dTR = pred(getTile(col + 1, row - 1));
+            const dBR = pred(getTile(col + 1, row + 1));
+            const dBL = pred(getTile(col - 1, row + 1));
+
+            if (nT && nL && !dTL) {
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              ctx.lineTo(x + r, y);
+              ctx.arc(x + r, y + r, r, -Math.PI * 0.5, Math.PI, true);
+              ctx.closePath();
+              ctx.fill();
+            }
+            if (nT && nR && !dTR) {
+              ctx.beginPath();
+              ctx.moveTo(x + ts, y);
+              ctx.lineTo(x + ts, y + r);
+              ctx.arc(x + ts - r, y + r, r, 0, -Math.PI * 0.5, true);
+              ctx.closePath();
+              ctx.fill();
+            }
+            if (nB && nR && !dBR) {
+              ctx.beginPath();
+              ctx.moveTo(x + ts, y + ts);
+              ctx.lineTo(x + ts - r, y + ts);
+              ctx.arc(x + ts - r, y + ts - r, r, Math.PI * 0.5, 0, true);
+              ctx.closePath();
+              ctx.fill();
+            }
+            if (nB && nL && !dBL) {
+              ctx.beginPath();
+              ctx.moveTo(x, y + ts);
+              ctx.lineTo(x, y + ts - r);
+              ctx.arc(x + r, y + ts - r, r, Math.PI, Math.PI * 0.5, true);
+              ctx.closePath();
+              ctx.fill();
+            }
+          }
+        }
+
+        ctx.restore();
+      }
+
+      function fillExpandedBlobLayer(pred, pad, radius, fillStyle) {
+        const ts = state.tileSize;
+        ctx.save();
+        ctx.fillStyle = fillStyle;
+        for (let row = 0; row < ROWS; row++) {
+          for (let col = 0; col < COLS; col++) {
+            const tile = grid[row][col];
+            if (!pred(tile)) continue;
+            const x = col * ts - pad;
+            const y = row * ts - pad;
+            const w = ts + pad * 2;
+            const r = Math.min(radius, w * 0.45);
+
+            const nT = pred(getTile(col, row - 1));
+            const nR = pred(getTile(col + 1, row));
+            const nB = pred(getTile(col, row + 1));
+            const nL = pred(getTile(col - 1, row));
+
+            ctx.beginPath();
+            ctx.roundRect(
+              x,
+              y,
+              w,
+              w,
+              [(!nT && !nL) ? r : 0, (!nT && !nR) ? r : 0, (!nB && !nR) ? r : 0, (!nB && !nL) ? r : 0]
+            );
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }
+
+      // -------------------------------------------------------------------------
+      // UNIFIED WATER & SHORELINE PIPELINE (MARCHING SQUARES CONTOUR + MASKING)
+      // Evaluates a smooth continuous water scalar field over a half-tile grid
+      // and extracts smooth interpolated iso-contours via Marching Squares.
+      // Diagonal water corners bridge smoothly without opposing star/bow-tie
+      // pinch spikes, and sand/beach bands are masked out of mountains and
+      // clipped cleanly outside the water surface.
+      // -------------------------------------------------------------------------
+      function sampleWaterField(gx, gy) {
+        const minC = Math.max(0, Math.floor(gx - 1.5));
+        const maxC = Math.min(COLS - 1, Math.ceil(gx + 1.5));
+        const minR = Math.max(0, Math.floor(gy - 1.5));
+        const maxR = Math.min(ROWS - 1, Math.ceil(gy + 1.5));
+
+        let sum = 0;
+        for (let r = minR; r <= maxR; r++) {
+          for (let c = minC; c <= maxC; c++) {
+            if (!isWater(grid[r][c])) continue;
+            // Distance to tile square [c, c+1] x [r, r+1]
+            const clampedX = Math.max(c, Math.min(c + 1, gx));
+            const clampedY = Math.max(r, Math.min(r + 1, gy));
+            const dist = Math.hypot(gx - clampedX, gy - clampedY);
+            const radius = 0.46;
+            if (dist < radius) {
+              const t = 1 - dist / radius;
+              // Smooth kernel that bridges diagonal corners gently
+              sum += t * t * (3 - 2 * t) * 0.72;
+            }
+          }
+        }
+        return sum;
+      }
+
+      function buildWaterScalarGrid(step = 0.5, bias = 0) {
+        const nCols = Math.ceil(COLS / step);
+        const nRows = Math.ceil(ROWS / step);
+        const values = new Float32Array((nCols + 1) * (nRows + 1));
+
+        for (let j = 0; j <= nRows; j++) {
+          const gy = j * step;
+          for (let i = 0; i <= nCols; i++) {
+            const gx = i * step;
+            // Inside water tiles, ensure core field stays above threshold
+            const tc = Math.min(COLS - 1, Math.floor(gx));
+            const tr = Math.min(ROWS - 1, Math.floor(gy));
+            const centerSample = sampleWaterField(gx, gy);
+            const insideBoost = (gx > 0 && gx < COLS && gy > 0 && gy < ROWS && isWater(getTile(tc, tr))) ? 0.35 : 0;
+            values[j * (nCols + 1) + i] = centerSample + insideBoost + bias;
+          }
+        }
+        return { values, nCols, nRows, step };
+      }
+
+      // Trace smooth Marching Squares iso-contour polygons/segments at `iso`
+      function traceMarchingSquares(gridData, ts, iso) {
+        const { values, nCols, nRows, step } = gridData;
+        const idx = (i, j) => j * (nCols + 1) + i;
+
+        function interpEdge(p1x, p1y, v1, p2x, p2y, v2) {
+          const denom = v2 - v1;
+          const t = Math.abs(denom) < 1e-6 ? 0.5 : Math.max(0, Math.min(1, (iso - v1) / denom));
+          return [
+            (p1x + t * (p2x - p1x)) * ts,
+            (p1y + t * (p2y - p1y)) * ts
+          ];
+        }
+
+        const segments = [];
+
+        for (let j = 0; j < nRows; j++) {
+          const y0 = j * step;
+          const y1 = (j + 1) * step;
+          for (let i = 0; i < nCols; i++) {
+            const x0 = i * step;
+            const x1 = (i + 1) * step;
+
+            const vTL = values[idx(i, j)];
+            const vTR = values[idx(i + 1, j)];
+            const vBR = values[idx(i + 1, j + 1)];
+            const vBL = values[idx(i, j + 1)];
+
+            const bTL = vTL >= iso ? 1 : 0;
+            const bTR = vTR >= iso ? 1 : 0;
+            const bBR = vBR >= iso ? 1 : 0;
+            const bBL = vBL >= iso ? 1 : 0;
+
+            const mask = bTL | (bTR << 1) | (bBR << 2) | (bBL << 3);
+            if (mask === 0 || mask === 15) continue;
+
+            // Edges: 0 = Top (TL->TR), 1 = Right (TR->BR), 2 = Bottom (BL->BR), 3 = Left (TL->BL)
+            const eTop = interpEdge(x0, y0, vTL, x1, y0, vTR);
+            const eRight = interpEdge(x1, y0, vTR, x1, y1, vBR);
+            const eBottom = interpEdge(x0, y1, vBL, x1, y1, vBR);
+            const eLeft = interpEdge(x0, y0, vTL, x0, y1, vBL);
+
+            // Resolve ambiguous saddle cases (5 and 10) using cell center average
+            const centerVal = (vTL + vTR + vBR + vBL) * 0.25;
+
+            switch (mask) {
+              case 1: segments.push([eLeft, eTop]); break;
+              case 2: segments.push([eTop, eRight]); break;
+              case 3: segments.push([eLeft, eRight]); break;
+              case 4: segments.push([eRight, eBottom]); break;
+              case 5:
+                if (centerVal >= iso) {
+                  segments.push([eLeft, eBottom]);
+                  segments.push([eTop, eRight]);
+                } else {
+                  segments.push([eLeft, eTop]);
+                  segments.push([eRight, eBottom]);
+                }
+                break;
+              case 6: segments.push([eTop, eBottom]); break;
+              case 7: segments.push([eLeft, eBottom]); break;
+              case 8: segments.push([eBottom, eLeft]); break;
+              case 9: segments.push([eTop, eBottom]); break;
+              case 10:
+                if (centerVal >= iso) {
+                  segments.push([eLeft, eTop]);
+                  segments.push([eRight, eBottom]);
+                } else {
+                  segments.push([eLeft, eBottom]);
+                  segments.push([eTop, eRight]);
+                }
+                break;
+              case 11: segments.push([eRight, eBottom]); break;
+              case 12: segments.push([eLeft, eRight]); break;
+              case 13: segments.push([eTop, eRight]); break;
+              case 14: segments.push([eLeft, eTop]); break;
+            }
+          }
+        }
+
+        return segments;
+      }
+
+      // Stitch unordered Marching Squares segments into smooth closed/open polylines
+      function stitchContourPaths(segments) {
+        const keyOf = (pt) => `${Math.round(pt[0] * 10)},${Math.round(pt[1] * 10)}`;
+        const unused = segments.map((s) => ({ a: s[0], b: s[1], used: false }));
+        const adj = new Map();
+
+        for (let idx = 0; idx < unused.length; idx++) {
+          const ka = keyOf(unused[idx].a);
+          const kb = keyOf(unused[idx].b);
+          if (!adj.has(ka)) adj.set(ka, []);
+          if (!adj.has(kb)) adj.set(kb, []);
+          adj.get(ka).push(idx);
+          adj.get(kb).push(idx);
+        }
+
+        const paths = [];
+        for (let startIdx = 0; startIdx < unused.length; startIdx++) {
+          if (unused[startIdx].used) continue;
+          unused[startIdx].used = true;
+          const chain = [unused[startIdx].a, unused[startIdx].b];
+
+          // Extend forward
+          let extending = true;
+          while (extending) {
+            extending = false;
+            const tail = chain[chain.length - 1];
+            const candidates = adj.get(keyOf(tail)) || [];
+            for (const cand of candidates) {
+              if (unused[cand].used) continue;
+              unused[cand].used = true;
+              const dA = Math.hypot(unused[cand].a[0] - tail[0], unused[cand].a[1] - tail[1]);
+              const dB = Math.hypot(unused[cand].b[0] - tail[0], unused[cand].b[1] - tail[1]);
+              if (dA < 1.2) {
+                chain.push(unused[cand].b);
+                extending = true;
+                break;
+              } else if (dB < 1.2) {
+                chain.push(unused[cand].a);
+                extending = true;
+                break;
+              }
+            }
+          }
+
+          // Extend backward
+          extending = true;
+          while (extending) {
+            extending = false;
+            const head = chain[0];
+            const candidates = adj.get(keyOf(head)) || [];
+            for (const cand of candidates) {
+              if (unused[cand].used) continue;
+              unused[cand].used = true;
+              const dA = Math.hypot(unused[cand].a[0] - head[0], unused[cand].a[1] - head[1]);
+              const dB = Math.hypot(unused[cand].b[0] - head[0], unused[cand].b[1] - head[1]);
+              if (dB < 1.2) {
+                chain.unshift(unused[cand].a);
+                extending = true;
+                break;
+              } else if (dA < 1.2) {
+                chain.unshift(unused[cand].b);
+                extending = true;
+                break;
+              }
+            }
+          }
+
+          paths.push(chain);
+        }
+        return paths;
+      }
+
+      function strokeSmoothContourPaths(paths, strokeStyle, lineWidth, fillStyle = null) {
+        if (!paths.length) return;
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+
+        for (const pts of paths) {
+          if (pts.length < 2) continue;
+          ctx.moveTo(pts[0][0], pts[0][1]);
+          for (let i = 1; i < pts.length - 1; i++) {
+            const midX = (pts[i][0] + pts[i + 1][0]) * 0.5;
+            const midY = (pts[i][1] + pts[i + 1][1]) * 0.5;
+            ctx.quadraticCurveTo(pts[i][0], pts[i][1], midX, midY);
+          }
+          const last = pts[pts.length - 1];
+          ctx.lineTo(last[0], last[1]);
+          const first = pts[0];
+          if (Math.hypot(last[0] - first[0], last[1] - first[1]) < 2.0) {
+            ctx.closePath();
+          }
+        }
+
+        if (fillStyle) {
+          ctx.fillStyle = fillStyle;
+          ctx.fill('evenodd');
+        }
+        if (strokeStyle && lineWidth > 0) {
+          ctx.strokeStyle = strokeStyle;
+          ctx.lineWidth = lineWidth;
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function drawUnifiedWaterAndShorelines(ts) {
+        const scalarGrid = buildWaterScalarGrid(0.5, 0);
+        const iso = 0.42;
+        const segments = traceMarchingSquares(scalarGrid, ts, iso);
+        const contourPaths = stitchContourPaths(segments);
+
+        // 1. Draw sandy beach / shoreline band ONLY along actual water-to-land edges,
+        //    excluding mountain/hill tiles so sand never bleeds onto cliff faces.
+        ctx.save();
+        // Clip out mountainous tiles so shoreline sand sits cleanly on grass/dirt
+        ctx.beginPath();
+        ctx.rect(-ts, -ts, (COLS + 2) * ts, (ROWS + 2) * ts);
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (isMountainous(grid[r][c])) {
+              ctx.rect(c * ts - 1, r * ts - 1, ts + 2, ts + 2);
+            }
+          }
+        }
+        ctx.clip('evenodd');
+
+        // Outer soft beach apron
+        strokeSmoothContourPaths(contourPaths, '#c8b382', 8.5);
+        // Inner warm shore lip
+        strokeSmoothContourPaths(contourPaths, 'rgba(154, 130, 82, 0.42)', 2.0);
+        ctx.restore();
+
+        // 2. Fill unified water body (ocean + river) cleanly
+        strokeSmoothContourPaths(contourPaths, null, 0, '#194b7d');
+
+        // 3. Shallow water rim inside the shoreline contour
+        strokeSmoothContourPaths(contourPaths, 'rgba(92, 178, 224, 0.42)', 3.2);
+
+        // 4. River channel highlight where river tiles exist
+        ctx.save();
+        ctx.fillStyle = 'rgba(42, 114, 178, 0.45)';
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (grid[r][c].biome === 'river') {
+              ctx.beginPath();
+              ctx.roundRect(c * ts + 4, r * ts + 4, ts - 8, ts - 8, 8);
+              ctx.fill();
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      // -------------------------------------------------------------------------
+      // MODE A: PROCEDURAL POLISHED RENDERER (MERGED BIOMES + ORGANIC JITTER)
+      // -------------------------------------------------------------------------
+      function renderProceduralPolished(timeSec) {
+        const ts = state.tileSize;
+
+        // PASS 1: Continuous Living Meadow Base
+        drawLivingMeadowBase(ts);
+
+        // PASS 2: Merged Terrain Biome Blobs
+        fillOrganicBlobLayer((t) => t && t.biome === 'dirt', 13, '#5f4c36');
+        fillOrganicBlobLayer((t) => t && t.biome === 'forest', 15, '#234222');
+
+        fillExpandedBlobLayer((t) => isMountainous(t), 3.5, 14, 'rgba(52, 58, 64, 0.55)');
+        fillOrganicBlobLayer((t) => isMountainous(t), 13, '#485058');
+        fillOrganicBlobLayer((t) => t && t.biome === 'mineral', 12, '#5b3d2e');
+
+        // Unified Marching-Squares Water Field & Land-Blended Shorelines
+        drawUnifiedWaterAndShorelines(ts);
+
+        // PASS 3: Water Surface Details
+        drawWaterDetails(ts, timeSec);
+
+        // PASS 4: Ultra-Subtle Gridlines
+        if (state.showGrid) {
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.045)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          for (let c = 0; c <= COLS; c++) {
+            ctx.moveTo(c * ts, 0);
+            ctx.lineTo(c * ts, ROWS * ts);
+          }
+          for (let r = 0; r <= ROWS; r++) {
+            ctx.moveTo(0, r * ts);
+            ctx.lineTo(COLS * ts, r * ts);
+          }
+          ctx.stroke();
+        }
+
+        // PASS 5: Merged Contiguous Farms
+        drawMergedFarms(ts, timeSec);
+
+        // PASS 6: Meandering Bézier Paths between Jittered Owned Structures
+        if (state.showPaths) {
+          drawMeanderingSettlementPaths(ts);
+        }
+
+        // PASS 7: Owned Territory Warm Tint + Radiused Perimeter Border
+        drawTerritoryPerimeter(ts);
+
+        // PASS 8: Claimable Frontier Dashed Outlines
+        drawFrontierOutlines(ts);
+
+        // PASS 9: Depot Hauling Range & Links
+        if (state.showDepots) {
+          drawDepotHaulingLinks(ts, timeSec);
+        }
+
+        // PASS 10: Merged Mountain Ridges & Connected Spurs
+        drawMergedMountainRanges(ts);
+
+        // PASS 11: Y-Sorted Merged Woodlands, Jittered Village Huts & Props
+        drawYSortedWorldObjects(ts, timeSec);
+
+        // PASS 12: Ambient Chimney Smoke Particles
+        if (state.showMotion) {
+          drawSmokeParticles(ts);
+        }
+
+        // PASS 13: Hover & Selection Reticle
+        drawSelectionReticle(ts, timeSec);
+      }
+
+      // -------------------------------------------------------------------------
+      // TERRITORY PERIMETER, FRONTIER OUTLINES & DEPOT HAULING LINKS
+      // -------------------------------------------------------------------------
+      function drawTerritoryPerimeter(ts) {
+        ctx.save();
+
+        // Warm ownership wash over owned tiles
+        ctx.fillStyle = 'rgba(110, 214, 102, 0.14)';
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (grid[r][c].owned) {
+              ctx.fillRect(c * ts, r * ts, ts, ts);
+            }
+          }
+        }
+
+        // Outer perimeter border only along edges where owned meets unowned
+        ctx.strokeStyle = '#6ee7b7';
+        ctx.lineWidth = 2.4;
+        ctx.lineCap = 'round';
+        ctx.shadowColor = 'rgba(110, 231, 183, 0.45)';
+        ctx.shadowBlur = 6;
+
+        ctx.beginPath();
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (!grid[r][c].owned) continue;
+            const x = c * ts;
+            const y = r * ts;
+
+            const nT = getTile(c, r - 1);
+            const nR = getTile(c + 1, r);
+            const nB = getTile(c, r + 1);
+            const nL = getTile(c - 1, r);
+
+            if (!nT || !nT.owned) {
+              ctx.moveTo(x, y + 1);
+              ctx.lineTo(x + ts, y + 1);
+            }
+            if (!nR || !nR.owned) {
+              ctx.moveTo(x + ts - 1, y);
+              ctx.lineTo(x + ts - 1, y + ts);
+            }
+            if (!nB || !nB.owned) {
+              ctx.moveTo(x, y + ts - 1);
+              ctx.lineTo(x + ts, y + ts - 1);
+            }
+            if (!nL || !nL.owned) {
+              ctx.moveTo(x + 1, y);
+              ctx.lineTo(x + 1, y + ts);
+            }
+          }
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawFrontierOutlines(ts) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.72)';
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([4, 3]);
+
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = grid[r][c];
+            if (!isFrontier(tile)) continue;
+            const x = c * ts;
+            const y = r * ts;
+            ctx.beginPath();
+            ctx.roundRect(x + 2, y + 2, ts - 4, ts - 4, 5);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawDepotHaulingLinks(ts, timeSec) {
+        const depots = [];
+        const deposits = [];
+
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const t = grid[r][c];
+            if (t.structure === 'depot') {
+              depots.push(t);
+            } else if (!t.structure && (t.biome === 'mineral' || t.biome === 'hill' || t.biome === 'forest' || isWater(t))) {
+              deposits.push(t);
+            }
+          }
+        }
+
+        if (!depots.length) return;
+
+        ctx.save();
+        const maxRadius = ts * 3.4;
+
+        for (const dep of depots) {
+          const off = getStructureOffset(dep);
+          const dx = (dep.col + 0.5) * ts + off.dx;
+          const dy = (dep.row + 0.5) * ts + off.dy;
+
+          // Subtle hauling range circle
+          ctx.strokeStyle = 'rgba(96, 165, 250, 0.24)';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([5, 5]);
+          ctx.beginPath();
+          ctx.arc(dx, dy, maxRadius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Connect to nearby resource deposits within range
+          for (const res of deposits) {
+            const rx = (res.col + 0.5) * ts;
+            const ry = (res.row + 0.5) * ts;
+            const dist = Math.hypot(rx - dx, ry - dy);
+            if (dist <= maxRadius) {
+              ctx.strokeStyle = 'rgba(147, 197, 253, 0.34)';
+              ctx.lineWidth = 1.4;
+              ctx.beginPath();
+              ctx.moveTo(dx, dy);
+              ctx.lineTo(rx, ry);
+              ctx.stroke();
+
+              // Animated hauling packet along link
+              if (state.showMotion) {
+                const prog = ((timeSec * 0.45 + hash2D(res.col, res.row, 77)) % 1);
+                const px = dx + (rx - dx) * prog;
+                const py = dy + (ry - dy) * prog;
+                ctx.fillStyle = '#fde047';
+                ctx.beginPath();
+                ctx.arc(px, py, 2.2, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+          }
+        }
+
+        ctx.restore();
+      }
+
+      function drawLivingMeadowBase(ts) {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = grid[r][c];
+            const x = c * ts;
+            const y = r * ts;
+            const v = hash2D(c, r, 1);
+            const v2 = hash2D(c, r, 2);
+
+            const delta = Math.round((v - 0.5) * 9);
+            ctx.fillStyle = `rgb(${48 + delta}, ${78 + delta}, ${37 + delta})`;
+            ctx.fillRect(x - 0.3, y - 0.3, ts + 0.6, ts + 0.6);
+
+            if (tile.biome === 'grass' && !tile.structure) {
+              ctx.fillStyle = 'rgba(134, 184, 92, 0.24)';
+              for (let i = 0; i < 3; i++) {
+                const gx = x + 5 + hashSub(c, r, i + 30) * (ts - 10);
+                const gy = y + 5 + hashSub(c, r, i + 35) * (ts - 10);
+                ctx.fillRect(gx, gy, 2, 3);
+              }
+              if (v > 0.70) {
+                ctx.fillStyle = v > 0.85 ? 'rgba(250, 224, 120, 0.68)' : 'rgba(240, 244, 255, 0.58)';
+                ctx.beginPath();
+                ctx.arc(x + 8 + v2 * (ts - 16), y + 8 + v * (ts - 16), 1.4, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            } else if (tile.biome === 'dirt' && !tile.structure) {
+              ctx.fillStyle = 'rgba(165, 138, 102, 0.32)';
+              for (let i = 0; i < 3; i++) {
+                const px = x + 7 + hashSub(c, r, i + 40) * (ts - 14);
+                const py = y + 7 + hashSub(c, r, i + 44) * (ts - 14);
+                ctx.beginPath();
+                ctx.arc(px, py, 1.4, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+          }
+        }
+      }
+
+      function drawWaterDetails(ts, timeSec) {
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = grid[r][c];
+            if (!isWater(tile)) continue;
+
+            const x = c * ts;
+            const y = r * ts;
+            const v = hash2D(c, r, 5);
+            const v2 = hash2D(c, r, 6);
+
+            if (tile.biome === 'ocean') {
+              const phase = (state.showMotion ? timeSec * 1.4 : 0) + v * 6.28;
+              const waveY = y + ts * (0.34 + v2 * 0.34) + Math.sin(phase) * 1.5;
+              const waveX = x + ts * 0.22 + Math.cos(phase * 0.7) * 2;
+              ctx.strokeStyle = 'rgba(154, 214, 255, 0.28)';
+              ctx.lineWidth = 1.4;
+              ctx.lineCap = 'round';
+              ctx.beginPath();
+              ctx.moveTo(waveX, waveY);
+              ctx.quadraticCurveTo(waveX + ts * 0.13, waveY - 3, waveX + ts * 0.26, waveY);
+              ctx.quadraticCurveTo(waveX + ts * 0.39, waveY + 3, waveX + ts * 0.52, waveY);
+              ctx.stroke();
+
+              if (tile.resourceAmount > 48) {
+                drawFishingSwirl(x + ts * 0.5, y + ts * 0.5, ts, v, timeSec);
+              }
+            } else if (tile.biome === 'river') {
+              const flow = state.showMotion ? (timeSec * 14) % ts : 0;
+              ctx.strokeStyle = 'rgba(145, 210, 255, 0.36)';
+              ctx.lineWidth = 1.3;
+              ctx.lineCap = 'round';
+              for (let i = 0; i < 2; i++) {
+                const rx = x + ((v * ts + i * ts * 0.5 + flow) % (ts - 10)) + 4;
+                const ry = y + ts * (0.35 + i * 0.32);
+                ctx.beginPath();
+                ctx.moveTo(rx, ry);
+                ctx.lineTo(rx + 7, ry);
+                ctx.stroke();
+              }
+            }
+          }
+        }
+      }
+
+      function drawMergedFarms(ts, timeSec) {
+        const isFarm = (t) => Boolean(t && t.structure === 'corn');
+
+        fillOrganicBlobLayer(isFarm, 11, '#583f26');
+
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = grid[r][c];
+            if (!isFarm(tile)) continue;
+
+            const x = c * ts;
+            const y = r * ts;
+            const nT = isFarm(getTile(c, r - 1));
+            const nR = isFarm(getTile(c + 1, r));
+            const nB = isFarm(getTile(c, r + 1));
+            const nL = isFarm(getTile(c - 1, r));
+
+            const padL = nL ? 0 : 4;
+            const padR = nR ? 0 : 4;
+            const padT = nT ? 0 : 4;
+            const padB = nB ? 0 : 4;
+
+            ctx.fillStyle = '#684b2e';
+            ctx.beginPath();
+            ctx.roundRect(
+              x + padL,
+              y + padT,
+              ts - padL - padR,
+              ts - padT - padB,
+              [(!nT && !nL) ? 8 : 0, (!nT && !nR) ? 8 : 0, (!nB && !nR) ? 8 : 0, (!nB && !nL) ? 8 : 0]
+            );
+            ctx.fill();
+
+            const v = hash2D(c, r, 71);
+            const sway = state.showMotion ? Math.sin(timeSec * 2.4 + v * 6.28) * 1.2 : 0;
+            const isWheatPatch = v > 0.62;
+
+            for (let row = 0; row < 3; row++) {
+              const fy = y + 11 + row * 11;
+              ctx.strokeStyle = '#4c351f';
+              ctx.lineWidth = 1.6;
+              ctx.beginPath();
+              ctx.moveTo(x + padL + 3, fy);
+              ctx.lineTo(x + ts - padR - 3, fy);
+              ctx.stroke();
+
+              for (let col = 0; col < 3; col++) {
+                const jx = (hashSub(c, r, row * 3 + col + 80) - 0.5) * 3.5;
+                const fx = x + 10 + col * 12 + jx;
+
+                if (isWheatPatch) {
+                  ctx.strokeStyle = '#d9a441';
+                  ctx.lineWidth = 1.5;
+                  ctx.beginPath();
+                  ctx.moveTo(fx, fy);
+                  ctx.lineTo(fx + sway * 1.2, fy - 6.5);
+                  ctx.stroke();
+
+                  ctx.fillStyle = '#fde047';
+                  ctx.beginPath();
+                  ctx.ellipse(fx + sway * 1.2, fy - 6.5, 1.5, 2.8, 0.25, 0, Math.PI * 2);
+                  ctx.fill();
+                } else {
+                  ctx.strokeStyle = '#489c38';
+                  ctx.lineWidth = 1.8;
+                  ctx.beginPath();
+                  ctx.moveTo(fx, fy);
+                  ctx.lineTo(fx + sway, fy - 7);
+                  ctx.stroke();
+
+                  ctx.fillStyle = '#facc15';
+                  ctx.beginPath();
+                  ctx.ellipse(fx + sway + 1, fy - 5, 1.6, 2.7, 0.3, 0, Math.PI * 2);
+                  ctx.fill();
+                }
+              }
+            }
+
+            if (v > 0.78 && (!nB || !nR)) {
+              ctx.fillStyle = '#eab308';
+              ctx.beginPath();
+              ctx.roundRect(x + ts - 14, y + ts - 12, 7, 5, 2);
+              ctx.fill();
+              ctx.strokeStyle = '#a16207';
+              ctx.lineWidth = 0.8;
+              ctx.stroke();
+            }
+          }
+        }
+
+        ctx.save();
+        ctx.strokeStyle = '#9c7349';
+        ctx.lineWidth = 1.8;
+        ctx.lineCap = 'round';
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            if (!isFarm(grid[r][c])) continue;
+            const x = c * ts;
+            const y = r * ts;
+            const inset = 3;
+
+            const nT = isFarm(getTile(c, r - 1));
+            const nR = isFarm(getTile(c + 1, r));
+            const nB = isFarm(getTile(c, r + 1));
+            const nL = isFarm(getTile(c - 1, r));
+
+            if (!nT) drawFenceSegment(x + (nL ? 0 : inset), y + inset, x + ts - (nR ? 0 : inset), y + inset);
+            if (!nB) drawFenceSegment(x + (nL ? 0 : inset), y + ts - inset, x + ts - (nR ? 0 : inset), y + ts - inset);
+            if (!nL) drawFenceSegment(x + inset, y + (nT ? 0 : inset), x + inset, y + ts - (nB ? 0 : inset));
+            if (!nR) drawFenceSegment(x + ts - inset, y + (nT ? 0 : inset), x + ts - inset, y + ts - (nB ? 0 : inset));
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawFenceSegment(x1, y1, x2, y2) {
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#6e4d2c';
+        const pts = [[x1, y1], [(x1 + x2) * 0.5, (y1 + y2) * 0.5], [x2, y2]];
+        for (const [px, py] of pts) {
+          ctx.beginPath();
+          ctx.arc(px, py, 1.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawMeanderingSettlementPaths(ts) {
+        ctx.save();
+        ctx.lineCap = 'round';
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = grid[r][c];
+            if (!tile.owned || !tile.structure) continue;
+
+            const offA = getStructureOffset(tile);
+            const ax = (c + 0.5) * ts + offA.dx;
+            const ay = (r + 0.62) * ts + offA.dy;
+
+            const targets = [getTile(c + 1, r), getTile(c, r + 1)];
+            for (const target of targets) {
+              if (target && target.owned && target.structure) {
+                const offB = getStructureOffset(target);
+                const bx = (target.col + 0.5) * ts + offB.dx;
+                const by = (target.row + 0.62) * ts + offB.dy;
+
+                const mx = (ax + bx) * 0.5;
+                const my = (ay + by) * 0.5;
+                const bend = (hash2D(c + target.col, r + target.row, 55) - 0.5) * 8;
+                const nx = -(by - ay) / ts;
+                const ny = (bx - ax) / ts;
+                const cx = mx + nx * bend;
+                const cy = my + ny * bend;
+
+                ctx.strokeStyle = 'rgba(138, 112, 78, 0.64)';
+                ctx.lineWidth = 4.8;
+                ctx.beginPath();
+                ctx.moveTo(ax, ay);
+                ctx.quadraticCurveTo(cx, cy, bx, by);
+                ctx.stroke();
+
+                ctx.strokeStyle = 'rgba(192, 164, 122, 0.45)';
+                ctx.lineWidth = 1.9;
+                ctx.beginPath();
+                ctx.moveTo(ax, ay);
+                ctx.quadraticCurveTo(cx, cy, bx, by);
+                ctx.stroke();
+              }
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      function renderFlatPrototype(timeSec) {
+        const ts = state.tileSize;
+        const flatColors = {
+          grass: '#2d4723',
+          forest: '#1e3a1e',
+          hill: '#474f57',
+          mineral: '#5c3c28',
+          ocean: '#163c66',
+          river: '#215288',
+          dirt: '#543f2a'
+        };
+
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = grid[r][c];
+            const x = c * ts;
+            const y = r * ts;
+
+            ctx.fillStyle = flatColors[tile.biome] || '#2d4723';
+            ctx.fillRect(x, y, ts, ts);
+
+            if (tile.owned) {
+              ctx.fillStyle = 'rgba(116, 209, 102, 0.16)';
+              ctx.fillRect(x, y, ts, ts);
+              ctx.strokeStyle = '#5bb850';
+              ctx.lineWidth = 1.5;
+              ctx.strokeRect(x + 1, y + 1, ts - 2, ts - 2);
+            } else if (isFrontier(tile)) {
+              ctx.strokeStyle = '#d97706';
+              ctx.lineWidth = 1.2;
+              ctx.setLineDash([3, 3]);
+              ctx.strokeRect(x + 1.5, y + 1.5, ts - 3, ts - 3);
+              ctx.setLineDash([]);
+            } else {
+              ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(x, y, ts, ts);
+            }
+
+            const cx = x + ts * 0.5;
+            const cy = y + ts * 0.5;
+            if (tile.structure === 'hut') {
+              drawVariedTimberHut(cx, cy, { scale: 0.9, flip: 1, variant: 0 });
+            } else if (tile.structure === 'corn') {
+              drawCornField(x, y, ts, 0.5, 0);
+            } else if (tile.structure === 'clay') {
+              drawAmphoraDepot(cx, cy, ts);
+            } else if (tile.structure === 'depot') {
+              drawCivicDepot(cx, cy, ts);
+            } else if (tile.structure === 'camp') {
+              drawSurveyorCamp(cx, cy, ts);
+            } else if (tile.biome === 'forest') {
+              drawLayeredPineTree(cx, cy, ts, 0.85, 0);
+            } else if (tile.biome === 'hill') {
+              drawRidgePeak({ x: cx, y: cy, height: 18, halfW: 12, isMineral: false, snowCap: true, seedVal: 0.5 });
+            } else if (tile.biome === 'mineral') {
+              drawCopperOutcrop(cx, cy, ts, 0.5);
+            } else if (isWater(tile)) {
+              drawFishingSwirl(cx, cy, ts, 0.5, 0);
+            }
+          }
+        }
+
+        drawSelectionReticle(ts, timeSec);
+      }
+
+      function drawCopperOutcrop(cx, cy, ts, v) {
+        ctx.save();
+        ctx.translate(cx, cy);
+
+        ctx.fillStyle = '#c85a32';
+        ctx.beginPath();
+        ctx.moveTo(0, -10);
+        ctx.lineTo(10, 0);
+        ctx.lineTo(6, 10);
+        ctx.lineTo(-7, 9);
+        ctx.lineTo(-10, -1);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#ea7b4b';
+        ctx.beginPath();
+        ctx.moveTo(0, -10);
+        ctx.lineTo(0, 2);
+        ctx.lineTo(-10, -1);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#ffd1a8';
+        ctx.beginPath();
+        ctx.arc(-2.5, -3.5, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      function drawCornField(x, y, ts, v, timeSec) {
+        ctx.save();
+        const pad = 6;
+        ctx.fillStyle = '#4e3924';
+        ctx.beginPath();
+        ctx.roundRect(x + pad, y + pad + 2, ts - pad * 2, ts - pad * 2 - 2, 4);
+        ctx.fill();
+
+        const sway = state.showMotion ? Math.sin(timeSec * 2.5 + v * 5) * 1.1 : 0;
+        for (let row = 0; row < 3; row++) {
+          const fy = y + 12 + row * 9;
+          ctx.strokeStyle = '#684c30';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x + 9, fy);
+          ctx.lineTo(x + ts - 9, fy);
+          ctx.stroke();
+
+          for (let col = 0; col < 3; col++) {
+            const fx = x + 12 + col * 10;
+            ctx.strokeStyle = '#4d9e3a';
+            ctx.lineWidth = 1.8;
+            ctx.beginPath();
+            ctx.moveTo(fx, fy);
+            ctx.lineTo(fx + sway, fy - 6);
+            ctx.stroke();
+
+            ctx.fillStyle = '#facc15';
+            ctx.beginPath();
+            ctx.ellipse(fx + sway, fy - 5.5, 1.8, 3, 0.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawAmphoraDepot(cx, cy, ts) {
+        ctx.save();
+        ctx.translate(cx, cy);
+
+        ctx.fillStyle = '#785233';
+        ctx.fillRect(-10, 4, 20, 6);
+
+        ctx.fillStyle = '#d97742';
+        ctx.beginPath();
+        ctx.ellipse(0, 1, 6.5, 8.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#ee9663';
+        ctx.beginPath();
+        ctx.ellipse(-2, 0, 2.5, 5.5, -0.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#c4622f';
+        ctx.fillRect(-3, -10, 6, 4);
+        ctx.strokeStyle = '#c4622f';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(-5.5, -5, 3, Math.PI * 0.5, Math.PI * 1.5);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(5.5, -5, 3, -Math.PI * 0.5, Math.PI * 0.5);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      function drawCivicDepot(cx, cy, ts) {
+        ctx.save();
+        ctx.translate(cx, cy);
+
+        ctx.fillStyle = '#64748b';
+        ctx.fillRect(-14, 7, 28, 5);
+
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(-12, -7, 24, 15);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillRect(3, -7, 9, 15);
+
+        ctx.fillStyle = '#2563eb';
+        ctx.beginPath();
+        ctx.moveTo(-14, -7);
+        ctx.lineTo(-8, -14);
+        ctx.lineTo(14, -14);
+        ctx.lineTo(14, -7);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.roundRect(-8, 0, 7, 8, [3, 3, 0, 0]);
+        ctx.fill();
+
+        ctx.fillStyle = '#fde047';
+        ctx.fillRect(4, -3, 3, 3);
+        ctx.fillRect(8.5, -3, 3, 3);
+
+        ctx.restore();
+      }
+
+      function drawSurveyorCamp(cx, cy, ts) {
+        ctx.save();
+        ctx.translate(cx, cy);
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.beginPath();
+        ctx.moveTo(-2, -10);
+        ctx.lineTo(-12, 8);
+        ctx.lineTo(4, 8);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.moveTo(-2, -10);
+        ctx.lineTo(4, 8);
+        ctx.lineTo(11, 8);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#334155';
+        ctx.beginPath();
+        ctx.moveTo(-4, 0);
+        ctx.lineTo(-7, 8);
+        ctx.lineTo(-1, 8);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      function drawFishingSwirl(cx, cy, ts, v, timeSec) {
+        ctx.save();
+        const rot = state.showMotion ? timeSec * 0.9 + v * 6 : v * 6;
+        ctx.translate(cx, cy);
+        ctx.rotate(rot);
+        ctx.strokeStyle = 'rgba(186, 230, 253, 0.32)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, 7, 0.2, Math.PI * 1.1);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(0, 0, 4, Math.PI * 1.2, Math.PI * 2.0);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawSmokeParticles(ts) {
+        ctx.save();
+        for (const p of state.particles) {
+          const x = (p.col + 0.63) * ts + p.dx + Math.sin(p.age * 4 + p.col) * 3 + p.age * p.drift * 14;
+          const y = (p.row + 0.24) * ts + p.dy - p.age * 18;
+          const alpha = Math.sin(p.age * Math.PI) * 0.38;
+          const radius = 1.5 + p.age * 2.6;
+
+          ctx.fillStyle = `rgba(226, 232, 240, ${alpha.toFixed(3)})`;
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      function drawSelectionReticle(ts, timeSec) {
+        if (state.hovered && (state.hovered.col !== state.selected.col || state.hovered.row !== state.selected.row)) {
+          const hx = state.hovered.col * ts;
+          const hy = state.hovered.row * ts;
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(hx + 1.5, hy + 1.5, ts - 3, ts - 3);
+        }
+
+        const sx = state.selected.col * ts;
+        const sy = state.selected.row * ts;
+        const pulse = state.showMotion ? 0.85 + Math.sin(timeSec * 4) * 0.15 : 1;
+
+        ctx.save();
+        ctx.strokeStyle = `rgba(255, 255, 255, ${pulse})`;
+        ctx.lineWidth = 2.4;
+        ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
+        ctx.shadowBlur = 8;
+        ctx.strokeRect(sx + 1, sy + 1, ts - 2, ts - 2);
+        ctx.restore();
+      }
+
+      function drawMergedMountainRanges(ts) {
+        const peaks = [];
+
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = grid[r][c];
+            if (!isMountainous(tile) || tile.structure === 'depot') continue;
+
+            const v = hash2D(c, r, 101);
+            const v2 = hash2D(c, r, 102);
+            const cx = (c + 0.5) * ts + (v - 0.5) * 8;
+            const cy = (r + 0.54) * ts + (v2 - 0.5) * 6;
+            const height = (tile.biome === 'mineral' ? 19 : 22) + v * 6;
+            const halfW = 14 + v2 * 5;
+
+            peaks.push({
+              x: cx,
+              y: cy,
+              height,
+              halfW,
+              isMineral: tile.biome === 'mineral',
+              snowCap: tile.biome === 'hill' && v > 0.35,
+              seedVal: v
+            });
+
+            const east = getTile(c + 1, r);
+            if (east && isMountainous(east) && east.structure !== 'depot') {
+              const ev = hash2D(c, r, 105);
+              peaks.push({
+                x: (c + 1.0) * ts + (ev - 0.5) * 5,
+                y: (r + 0.52) * ts + (hash2D(c, r, 106) - 0.5) * 6,
+                height: 15 + ev * 5,
+                halfW: 12 + ev * 3,
+                isMineral: tile.biome === 'mineral' && east.biome === 'mineral',
+                snowCap: false,
+                seedVal: ev
+              });
+            }
+
+            const south = getTile(c, r + 1);
+            if (south && isMountainous(south) && south.structure !== 'depot') {
+              const sv = hash2D(c, r, 109);
+              peaks.push({
+                x: (c + 0.5) * ts + (hash2D(c, r, 110) - 0.5) * 7,
+                y: (r + 1.0) * ts + (sv - 0.5) * 4,
+                height: 16 + sv * 5,
+                halfW: 13 + sv * 3,
+                isMineral: tile.biome === 'mineral' || south.biome === 'mineral',
+                snowCap: sv > 0.65,
+                seedVal: sv
+              });
+            }
+          }
+        }
+
+        peaks.sort((a, b) => a.y - b.y);
+
+        for (const p of peaks) {
+          drawRidgePeak(p);
+        }
+      }
+
+      function drawRidgePeak(p) {
+        const baseY = p.y + 8;
+        const apexX = p.x + (p.seedVal - 0.5) * 4;
+        const apexY = baseY - p.height;
+
+        ctx.fillStyle = 'rgba(12, 16, 22, 0.28)';
+        ctx.beginPath();
+        ctx.ellipse(p.x + 2, baseY + 1, p.halfW * 0.95, 4.2, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = p.isMineral ? '#8f5b42' : '#7c8a99';
+        ctx.beginPath();
+        ctx.moveTo(p.x - p.halfW, baseY);
+        ctx.lineTo(apexX, apexY);
+        ctx.lineTo(apexX + 1, baseY);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = p.isMineral ? '#633d2b' : '#505b68';
+        ctx.beginPath();
+        ctx.moveTo(apexX, apexY);
+        ctx.lineTo(p.x + p.halfW, baseY);
+        ctx.lineTo(apexX, baseY);
+        ctx.closePath();
+        ctx.fill();
+
+        if (p.snowCap) {
+          const snowH = p.height * 0.34;
+          const ratio = snowH / p.height;
+          const leftSnowX = apexX + (p.x - p.halfW - apexX) * ratio;
+          const rightSnowX = apexX + (p.x + p.halfW - apexX) * ratio;
+          ctx.fillStyle = '#dce5ef';
+          ctx.beginPath();
+          ctx.moveTo(apexX, apexY);
+          ctx.lineTo(leftSnowX, apexY + snowH);
+          ctx.lineTo(apexX, apexY + snowH * 0.78);
+          ctx.lineTo(rightSnowX, apexY + snowH);
+          ctx.closePath();
+          ctx.fill();
+        } else if (p.isMineral) {
+          ctx.strokeStyle = '#ea7b4b';
+          ctx.lineWidth = 2;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.moveTo(apexX - 2, apexY + p.height * 0.35);
+          ctx.lineTo(apexX - 5, apexY + p.height * 0.72);
+          ctx.stroke();
+
+          ctx.fillStyle = '#ffd1a8';
+          ctx.beginPath();
+          ctx.arc(apexX - 3, apexY + p.height * 0.48, 1.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawYSortedWorldObjects(ts, timeSec) {
+        const renderList = [];
+
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = grid[r][c];
+            const x = c * ts;
+            const y = r * ts;
+
+            if (tile.biome === 'forest' && !tile.structure) {
+              const treeCount = 3 + (hash2D(c, r, 200) > 0.55 ? 1 : 0);
+              for (let i = 0; i < treeCount; i++) {
+                const tx = x + 8 + hashSub(c, r, 210 + i) * (ts - 16);
+                const ty = y + 10 + hashSub(c, r, 220 + i) * (ts - 14);
+                const tScale = 0.68 + hashSub(c, r, 230 + i) * 0.34;
+                const hueShift = (hashSub(c, r, 240 + i) - 0.5) * 14;
+                renderList.push({
+                  type: 'tree',
+                  sortY: ty + 6 * tScale,
+                  x: tx,
+                  y: ty,
+                  scale: tScale,
+                  hueShift
+                });
+              }
+
+              const east = getTile(c + 1, r);
+              if (east && east.biome === 'forest' && !east.structure) {
+                const bx = x + ts + (hash2D(c, r, 250) - 0.5) * 6;
+                const by = y + 12 + hash2D(c, r, 251) * (ts - 18);
+                const bScale = 0.72 + hash2D(c, r, 252) * 0.28;
+                renderList.push({
+                  type: 'tree',
+                  sortY: by + 6 * bScale,
+                  x: bx,
+                  y: by,
+                  scale: bScale,
+                  hueShift: (hash2D(c, r, 253) - 0.5) * 12
+                });
+              }
+
+              const south = getTile(c, r + 1);
+              if (south && south.biome === 'forest' && !south.structure) {
+                const bx = x + 10 + hash2D(c, r, 260) * (ts - 20);
+                const by = y + ts + (hash2D(c, r, 261) - 0.5) * 5;
+                const bScale = 0.74 + hash2D(c, r, 262) * 0.28;
+                renderList.push({
+                  type: 'tree',
+                  sortY: by + 6 * bScale,
+                  x: bx,
+                  y: by,
+                  scale: bScale,
+                  hueShift: (hash2D(c, r, 263) - 0.5) * 12
+                });
+              }
+
+              const southEast = getTile(c + 1, r + 1);
+              if (southEast && southEast.biome === 'forest' && east && east.biome === 'forest' && south && south.biome === 'forest') {
+                const bx = x + ts + (hash2D(c, r, 270) - 0.5) * 5;
+                const by = y + ts + (hash2D(c, r, 271) - 0.5) * 5;
+                const bScale = 0.78 + hash2D(c, r, 272) * 0.25;
+                renderList.push({
+                  type: 'tree',
+                  sortY: by + 6 * bScale,
+                  x: bx,
+                  y: by,
+                  scale: bScale,
+                  hueShift: 4
+                });
+              }
+            }
+
+            if (tile.structure && tile.structure !== 'corn') {
+              const off = getStructureOffset(tile);
+              const cx = x + ts * 0.5 + off.dx;
+              const cy = y + ts * 0.5 + off.dy;
+              renderList.push({
+                type: 'structure',
+                sortY: cy + 11 * off.scale,
+                tile,
+                cx,
+                cy,
+                off
+              });
+            }
+          }
+        }
+
+        renderList.sort((a, b) => a.sortY - b.sortY);
+
+        for (const item of renderList) {
+          if (item.type === 'tree') {
+            drawShadowEllipse(item.x + 2 * item.scale, item.y + 7 * item.scale, 8.5 * item.scale, 3.8 * item.scale);
+            drawLayeredPineTree(item.x, item.y, ts, item.scale, item.hueShift);
+          } else if (item.type === 'structure') {
+            const { tile, cx, cy, off } = item;
+            if (tile.structure === 'hut') {
+              drawShadowEllipse(cx + 2.5, cy + 10 * off.scale, 13 * off.scale, 5.2 * off.scale);
+              drawVariedTimberHut(cx, cy, off);
+            } else if (tile.structure === 'clay') {
+              drawShadowEllipse(cx + 2, cy + 10 * off.scale, 10 * off.scale, 4.5 * off.scale);
+              drawAmphoraDepot(cx, cy, ts);
+            } else if (tile.structure === 'depot') {
+              drawShadowEllipse(cx + 3, cy + 11 * off.scale, 15 * off.scale, 6 * off.scale);
+              drawCivicDepot(cx, cy, ts);
+            } else if (tile.structure === 'camp') {
+              drawShadowEllipse(cx + 2, cy + 9 * off.scale, 12 * off.scale, 4.8 * off.scale);
+              drawSurveyorCamp(cx, cy, ts);
+            }
+          }
+        }
+
+        for (let r = 0; r < ROWS; r++) {
+          for (let c = 0; c < COLS; c++) {
+            const tile = grid[r][c];
+            if (tile.owned && (tile.structure || tile.biome === 'forest' || isMountainous(tile))) {
+              drawOwnedStatusPip(c * ts, r * ts, ts);
+            }
+          }
+        }
+      }
+
+      function drawShadowEllipse(x, y, rx, ry) {
+        ctx.fillStyle = 'rgba(10, 14, 18, 0.34)';
+        ctx.beginPath();
+        ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      function drawOwnedStatusPip(x, y, ts) {
+        ctx.fillStyle = '#4ade80';
+        ctx.beginPath();
+        ctx.roundRect(x + 4, y + 4, 4.2, 4.2, 1.5);
+        ctx.fill();
+      }
+
+      function drawLayeredPineTree(cx, cy, ts, scale = 1, hueShift = 0) {
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(scale, scale);
+
+        ctx.fillStyle = '#5c3d28';
+        ctx.fillRect(-2.1, 4.5, 4.2, 6.5);
+
+        const g = Math.round(hueShift);
+        const tiers = [
+          { yTop: -13, yBot: -1, halfW: 8.5, colLeft: `rgb(${47 + g}, ${111 + g}, 62)`, colRight: `rgb(${34 + g}, ${84 + g}, 46)` },
+          { yTop: -7,  yBot: 4,  halfW: 10.5, colLeft: `rgb(${53 + g}, ${123 + g}, 69)`, colRight: `rgb(${38 + g}, ${93 + g}, 51)` },
+          { yTop: -1,  yBot: 8,  halfW: 12.2, colLeft: `rgb(${60 + g}, ${136 + g}, 77)`, colRight: `rgb(${43 + g}, ${103 + g}, 57)` }
+        ];
+
+        for (const t of tiers) {
+          ctx.fillStyle = t.colLeft;
+          ctx.beginPath();
+          ctx.moveTo(0, t.yTop);
+          ctx.lineTo(-t.halfW, t.yBot);
+          ctx.lineTo(0, t.yBot + 1);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.fillStyle = t.colRight;
+          ctx.beginPath();
+          ctx.moveTo(0, t.yTop);
+          ctx.lineTo(t.halfW, t.yBot);
+          ctx.lineTo(0, t.yBot + 1);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      function drawVariedTimberHut(cx, cy, off) {
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(off.scale * off.flip, off.scale);
+
+        const roofPalettes = [
+          { main: '#c28d52', edge: '#e0b075', wall: '#9c7350', shade: '#7d593c' },
+          { main: '#b36b43', edge: '#d98f66', wall: '#a88463', shade: '#856548' },
+          { main: '#8c6d46', edge: '#b59467', wall: '#8f6b4a', shade: '#6e5035' },
+          { main: '#c99b42', edge: '#ebd078', wall: '#9e7a56', shade: '#7a5c3e' }
+        ];
+        const pal = roofPalettes[off.variant % roofPalettes.length];
+
+        ctx.fillStyle = pal.wall;
+        ctx.fillRect(-9, -1, 18, 12);
+
+        ctx.fillStyle = pal.shade;
+        ctx.fillRect(2, -1, 7, 12);
+
+        ctx.fillStyle = '#3b2618';
+        ctx.fillRect(-3.5, 4, 4.5, 7);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillRect(3.5, 2.5, 3, 3);
+
+        ctx.fillStyle = '#6b4432';
+        ctx.fillRect(4.5, -12, 3.5, 7);
+
+        ctx.fillStyle = pal.main;
+        ctx.beginPath();
+        ctx.moveTo(0, -12);
+        ctx.lineTo(-12, 0);
+        ctx.lineTo(12, 0);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = pal.edge;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(-11.5, 0);
+        ctx.lineTo(0, -12);
+        ctx.lineTo(11.5, 0);
+        ctx.stroke();
+
+        if (off.variant === 0) {
+          ctx.fillStyle = '#5c3a21';
+          ctx.fillRect(-13, 6.5, 4, 4);
+          ctx.fillStyle = '#d4a373';
+          ctx.beginPath();
+          ctx.arc(-11.8, 7.5, 1, 0, Math.PI * 2);
+          ctx.arc(-10.2, 7.5, 1, 0, Math.PI * 2);
+          ctx.arc(-11, 9.2, 1, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (off.variant === 1) {
+          ctx.fillStyle = '#785032';
+          ctx.beginPath();
+          ctx.roundRect(9.5, 5.5, 3.5, 5, 1);
+          ctx.fill();
+        } else if (off.variant === 2) {
+          ctx.fillStyle = '#3f6212';
+          ctx.fillRect(-13, 8, 4.5, 2.5);
+          ctx.fillStyle = '#f87171';
+          ctx.fillRect(-12, 7.5, 1.5, 1.5);
+        }
+
+        ctx.restore();
+      }
+
+      // =========================================================================
+      // INTERACTION & ANIMATION LOOP
+      // =========================================================================
+      function screenToGrid(clientX, clientY) {
+        const rect = container.getBoundingClientRect();
+        const sx = (clientX - rect.left - state.panX) / state.zoom;
+        const sy = (clientY - rect.top - state.panY) / state.zoom;
+        const col = Math.floor(sx / state.tileSize);
+        const row = Math.floor(sy / state.tileSize);
+        if (col >= 0 && col < COLS && row >= 0 && row < ROWS) {
+          return { col, row };
+        }
+        return null;
+      }
+
+      canvas.addEventListener('pointerdown', (e) => {
+        state.isDragging = true;
+        state.dragMoved = false;
+        state.lastPointerX = e.clientX;
+        state.lastPointerY = e.clientY;
+        canvas.setPointerCapture(e.pointerId);
+      });
+
+      canvas.addEventListener('pointermove', (e) => {
+        if (state.isDragging) {
+          const dx = e.clientX - state.lastPointerX;
+          const dy = e.clientY - state.lastPointerY;
+          if (Math.hypot(dx, dy) > 4) state.dragMoved = true;
+          state.panX += dx;
+          state.panY += dy;
+          state.lastPointerX = e.clientX;
+          state.lastPointerY = e.clientY;
+        } else {
+          state.hovered = screenToGrid(e.clientX, e.clientY);
+        }
+      });
+
+      canvas.addEventListener('pointerup', (e) => {
+        if (!state.dragMoved) {
+          const hit = screenToGrid(e.clientX, e.clientY);
+          if (hit) {
+            state.selected = hit;
+            updateHUD();
+          }
+        }
+        state.isDragging = false;
+      });
+
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = container.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const factor = e.deltaY < 0 ? 1.12 : 0.9;
+        const nextZoom = Math.max(0.65, Math.min(2.4, state.zoom * factor));
+        state.panX = mx - (mx - state.panX) * (nextZoom / state.zoom);
+        state.panY = my - (my - state.panY) * (nextZoom / state.zoom);
+        state.zoom = nextZoom;
+      }, { passive: false });
+
+      btnModePolished.addEventListener('click', () => {
+        state.mode = 'polished';
+        btnModePolished.className = 'px-2.5 py-1 rounded-md font-medium bg-[#253045] text-white shadow-sm transition-colors';
+        btnModeFlat.className = 'px-2.5 py-1 rounded-md font-medium text-[#7d8da6] hover:text-slate-200 transition-colors';
+      });
+
+      btnModeFlat.addEventListener('click', () => {
+        state.mode = 'flat';
+        btnModeFlat.className = 'px-2.5 py-1 rounded-md font-medium bg-[#253045] text-white shadow-sm transition-colors';
+        btnModePolished.className = 'px-2.5 py-1 rounded-md font-medium text-[#7d8da6] hover:text-slate-200 transition-colors';
+      });
+
+      btnRerollSeed.addEventListener('click', () => {
+        state.seed = Math.floor(100000000 + Math.random() * 899999999);
+        seedLabel.textContent = state.seed;
+        initWorld();
+        updateHUD();
+        showToast('Seed re-rolled');
+      });
+
+      document.getElementById('btnZoomIn').addEventListener('click', () => {
+        state.zoom = Math.min(2.4, state.zoom * 1.18);
+      });
+
+      document.getElementById('btnZoomOut').addEventListener('click', () => {
+        state.zoom = Math.max(0.65, state.zoom / 1.18);
+      });
+
+      document.getElementById('btnRecenter').addEventListener('click', () => {
+        centerCamera(true);
+      });
+
+      function bindOverlayToggle(id, prop) {
+        const btn = document.getElementById(id);
+        btn.addEventListener('click', () => {
+          state[prop] = !state[prop];
+          btn.dataset.active = String(state[prop]);
+          btn.classList.toggle('bg-[#1b2230]', state[prop]);
+          btn.classList.toggle('text-slate-200', state[prop]);
+          btn.classList.toggle('bg-[#0d1017]', !state[prop]);
+          btn.classList.toggle('text-[#64748b]', !state[prop]);
+        });
+      }
+
+      bindOverlayToggle('toggleGrid', 'showGrid');
+      bindOverlayToggle('togglePaths', 'showPaths');
+      bindOverlayToggle('toggleDepots', 'showDepots');
+      bindOverlayToggle('toggleSmoke', 'showMotion');
+
+      btnClaim.addEventListener('click', () => {
+        const sel = getTile(state.selected.col, state.selected.row);
+        if (!sel || sel.owned || !isFrontier(sel)) return;
+        sel.owned = true;
+        state.claimCost = Math.round(state.claimCost * 1.12);
+        updateHUD();
+        showToast(`Claimed (${sel.worldX}, ${sel.worldY})`);
+      });
+
+      let toastTimer = null;
+      function showToast(msg) {
+        actionFeedback.textContent = msg;
+        actionFeedback.style.opacity = '1';
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          actionFeedback.style.opacity = '0';
+        }, 1800);
+      }
+
+      let lastTime = performance.now();
+      function loop(now) {
+        const dt = Math.min(0.05, (now - lastTime) / 1000);
+        lastTime = now;
+
+        if (state.showMotion) {
+          for (const p of state.particles) {
+            p.age = (p.age + dt * p.speed) % 1;
+          }
+        }
+
+        render(now / 1000);
+        requestAnimationFrame(loop);
+      }
+
+      window.addEventListener('resize', resizeCanvas);
+
+      window.onload = function () {
+        initWorld();
+        resizeCanvas();
+        updateHUD();
+        requestAnimationFrame(loop);
+      };
+    })();
+  </script>
+</body>
+</html>

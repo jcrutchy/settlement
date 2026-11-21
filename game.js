@@ -361,29 +361,66 @@ function renderMap() { // info line and buttons, then the canvas
     drawMap();
 }
 
+// --- RENDERERS & DISPLAY SETTINGS (graphics are pluggable; see render-classic.js for the contract) ---
+const RENDERERS = (window.SettlementRenderers = window.SettlementRenderers || {}), SKEY = "settlement_settings";
+let SETTINGS = { available: [["classic", "Classic"]], render: { renderer: "classic", options: {} }, layout: { mapHeightVh: 55 } }, animOn = false;
+const WORLD = { // the read-only view of the game that renderers draw from
+    terrainAt: (x, y) => terrainAt(x, y), terrain: id => TD[id], fallbackTerrain: () => G.map.terrain[G.map.terrain.length - 1].id,
+    tile: (x, y) => S.own[K(x, y)] || null, key: K, claimable: (x, y) => claimable(x, y), allowed: (b, x, y) => allowed(b, x, y),
+    building: id => bOf(id), centerIcon: () => G.map.centerIcon, selected: () => selTile, moving: () => placing !== null ? bOf(S.own[placing].b) : null,
+    owned: () => owned(), isDepot: id => isDepot(id), deposits: () => G.deposits, depositsAt: (x, y) => G.deposits.filter(d => dterr(d).includes(terrainAt(x, y)))
+};
+const curRenderer = () => RENDERERS[SETTINGS.render.renderer];
+const optsOf = rd => Object.fromEntries((rd.options || []).map(o => [o.id, ((SETTINGS.render.options[SETTINGS.render.renderer] || {})[o.id]) ?? o.default]));
+const saveSettings = () => { try { localStorage.setItem(SKEY, JSON.stringify({ render: SETTINGS.render, layout: SETTINGS.layout })); } catch (e) { /* ignore */ } };
+const applyLayout = () => { $("map").style.height = SETTINGS.layout.mapHeightVh + "vh"; };
+
+async function loadSettings() {
+    let d = {}; try { const r = await fetchFresh("settings.json"); if (r.ok) d = await r.json(); } catch (e) { /* defaults */ }
+    let u = {}; try { u = JSON.parse(localStorage.getItem(SKEY)) || {}; } catch (e) { /* ignore */ }
+    const dr = d.render || SETTINGS.render, ur = u.render || {};
+    SETTINGS = { available: d.available || SETTINGS.available, render: { renderer: ur.renderer || dr.renderer || "classic", options: { ...(dr.options || {}), ...(ur.options || {}) } }, layout: { ...SETTINGS.layout, ...(d.layout || {}), ...(u.layout || {}) } };
+}
+async function useRenderer() { // load the selected renderer script on first use; fall back to classic if it can't be loaded
+    const id = SETTINGS.render.renderer;
+    if (!RENDERERS[id]) {
+        try {
+            const r = await fetchFresh(`render-${id}.js`);
+            if (r.ok) { const sc = document.createElement("script"); sc.textContent = (await r.text()) + `\n//# sourceURL=render-${id}.js`; document.body.append(sc); }
+        } catch (e) { /* offline or missing */ }
+        if (!RENDERERS[id] && id !== "classic") { SETTINGS.render.renderer = "classic"; return useRenderer(); }
+    }
+    syncAnim(); drawMap();
+}
+function syncAnim() { // renderers with animated: true get a repaint every frame while the tab is visible
+    const r = curRenderer();
+    if (!r || !r.animated || animOn) return;
+    animOn = true;
+    const tick = () => { const c = curRenderer(); if (!c || !c.animated) { animOn = false; return; } if (!document.hidden) drawMap(); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+}
 function drawMap() {
-    const cv = $("map"), dpr = window.devicePixelRatio || 1, W = cv.clientWidth, Hh = cv.clientHeight;
+    const rd = curRenderer(), cv = $("map");
+    if (!rd) return;
+    const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, Hh = cv.clientHeight;
     if (!W) return;
     if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(Hh * dpr); }
-    const c = cv.getContext("2d"), z = zoom; c.setTransform(dpr, 0, 0, dpr, 0, 0);
-    c.fillStyle = "#0b0d10"; c.fillRect(0, 0, W, Hh);
-    const x0 = Math.floor(cam.x - W / 2 / z), x1 = Math.ceil(cam.x + W / 2 / z), y0 = Math.floor(cam.y - Hh / 2 / z), y1 = Math.ceil(cam.y + Hh / 2 / z);
-    const moving = placing !== null ? bOf(S.own[placing].b) : null;
-    c.textAlign = "center"; c.textBaseline = "middle";
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-        const tid = terrainAt(x, y), td = TD[tid], k = K(x, y), o = S.own[k], px = (x - cam.x) * z + W / 2, py = (y - cam.y) * z + Hh / 2;
-        c.globalAlpha = o ? 1 : 0.5; c.fillStyle = td.color; c.fillRect(px, py, z + 0.5, z + 0.5); c.globalAlpha = 1;
-        if (o && z >= 12) { c.strokeStyle = "#cbd5e1"; c.globalAlpha = 0.35; c.lineWidth = 1; c.strokeRect(px + 0.5, py + 0.5, z - 1, z - 1); c.globalAlpha = 1; }
-        if (z >= 20) {
-            if (o && o.b) {
-                c.font = Math.floor(z * 0.62) + "px sans-serif"; c.fillText(o.b === "center" ? G.map.centerIcon : bOf(o.b).icon || "🏗️", px + z / 2, py + z / 2 + 1);
-                if (z >= 30) { c.font = Math.floor(z * 0.3) + "px sans-serif"; c.fillText(td.icon, px + z * 0.2, py + z * 0.2); }
-            } else if (tid !== G.map.terrain[G.map.terrain.length - 1].id) { c.font = Math.floor(z * 0.5) + "px sans-serif"; c.globalAlpha = o ? 1 : 0.8; c.fillText(td.icon, px + z / 2, py + z / 2 + 1); c.globalAlpha = 1; }
-        }
-        if (!o && claimable(x, y)) { c.setLineDash([3, 3]); c.strokeStyle = "#d97706"; c.lineWidth = 1.5; c.strokeRect(px + 1, py + 1, z - 2, z - 2); c.setLineDash([]); }
-        if (moving && o && !o.b && allowed(moving, x, y)) { c.strokeStyle = "#34d399"; c.lineWidth = 2; c.strokeRect(px + 1, py + 1, z - 2, z - 2); }
-        if (k === selTile) { c.strokeStyle = "#e2e8f0"; c.lineWidth = 2; c.strokeRect(px + 1, py + 1, z - 2, z - 2); }
-    }
+    const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    rd.draw({ ctx: c, W, H: Hh, cam, zoom, time: performance.now() / 1000, world: WORLD, opts: optsOf(rd) });
+}
+function renderDisplayUI() {
+    const box = $("display-body"), rd = curRenderer();
+    const mk = (tag, p = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, p); e.append(...kids); return e; };
+    const row = (label, w) => mk("div", { className: "fld", style: "margin:8px 0;" }, mk("span", { className: "hint", textContent: label + " " }), w);
+    const pick = mk("select", { onchange: async e => { SETTINGS.render.renderer = e.target.value; await useRenderer(); saveSettings(); renderDisplayUI(); } },
+        ...SETTINGS.available.map(([id, name]) => mk("option", { value: id, textContent: name })));
+    pick.value = SETTINGS.render.renderer;
+    const opts = ((rd && rd.options) || []).map(o => {
+        const cur = optsOf(rd)[o.id];
+        return mk("label", { className: "hint", style: "display:block;margin:4px 0;" }, mk("input", { type: "checkbox", checked: !!cur, onchange: e => { (SETTINGS.render.options[SETTINGS.render.renderer] = SETTINGS.render.options[SETTINGS.render.renderer] || {})[o.id] = e.target.checked; saveSettings(); drawMap(); } }), " " + o.label);
+    });
+    const height = mk("input", { type: "range", min: 30, max: 90, value: SETTINGS.layout.mapHeightVh, oninput: e => { SETTINGS.layout.mapHeightVh = +e.target.value; applyLayout(); drawMap(); }, onchange: saveSettings });
+    box.replaceChildren(row("Graphics", pick), ...opts, row("Map height", height));
 }
 
 function bindMap() { // drag to pan, wheel/pinch/buttons to zoom, tap to select
@@ -560,6 +597,7 @@ async function pull() {
 
 function bindEvents() {
     $("toggle-sync-btn").onclick = () => $("sync-panel").classList.toggle("hidden");
+    $("toggle-display-btn").onclick = () => $("display-panel").classList.toggle("hidden");
     $("gist-token").oninput = $("gist-id").oninput = saveCreds;
     $("push-gist-btn").onclick = () => push(false);
     $("pull-gist-btn").onclick = pull;
@@ -589,6 +627,7 @@ async function init() {
     document.title = G.meta.title; $("game-h1").textContent = G.meta.title;
     S = loadLocal();
     if (S) { ensure(); recenter(); } else startNew(randSeed());
+    await loadSettings(); applyLayout(); await useRenderer(); renderDisplayUI();
     loadCredsUI(); syncUI(); bindEvents();
     advance(); checkUnlocks(); renderAll();
     setInterval(() => { advance() ? renderAll() : renderDynamic(); sampleHist(); }, 1000);

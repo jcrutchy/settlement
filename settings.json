@@ -1,0 +1,7 @@
+{
+  "available": [
+    ["classic", "Classic (flat colours and emoji)"]
+  ],
+  "render": { "renderer": "classic", "options": {} },
+  "layout": { "mapHeightVh": 55 }
+}
