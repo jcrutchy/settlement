@@ -131,7 +131,7 @@ async function init() {
     document.head.append(st);
     const seg = (items, get, set) => h("div", { class: "seg" }, items.map(([k, label], i) => h("button", { class: get(i, k) ? "btn-primary" : "", textContent: label, onclick: () => { set(i, k); controls(); render(); } })));
     const controls = () => $("controls").replaceChildren(
-        seg(RANGES, i => i === range, i => range = i), seg(MODES, (i, k) => k === mode, (i, k) => mode = k));
+        seg(RANGES.map(([label, ms]) => [ms, label]), i => i === range, i => range = i), seg(MODES, (i, k) => k === mode, (i, k) => mode = k));
     $("app").replaceChildren(
         h("header", {}, h("div", { class: "title-bar" }, h("h1", { textContent: "STATS" }), h("span", {}, h("a", { href: "index.html", class: "muted", textContent: "game" }), " · ", h("a", { href: "tree.html", class: "muted", textContent: "tech tree" }))),
             h("div", { id: "controls", class: "button-row", style: "gap:14px;" }), h("p", { class: "hint", id: "status", style: "margin-top:8px;" })),

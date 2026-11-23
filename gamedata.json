@@ -1,6 +1,34 @@
 {
   "meta": { "title": "SETTLEMENT // v0.8", "autoSaveMs": 30000, "liveStepSec": 1, "offlineStepSec": 5, "maxOfflineSec": 28800 },
-  "pop": { "needs": { "food": 0.5 }, "growthRate": 0.15, "growthFoodMin": 10, "starveRate": 0.05 },
+  "pop": { "needs": { "food": 0.5 }, "growthRate": 0.15, "growthFoodMin": 10, "starveRate": 0.05, "overcrowdRate": 0.02 },
+  "newGame": {
+    "presets": [
+      { "id": "standard", "name": "Standard", "desc": "Start with nothing in a clearing and build up from there.", "values": {} },
+      { "id": "relaxed", "name": "Relaxed", "desc": "A small village to begin with, gentler rules, and all automation switched on.",
+        "values": { "settlers": 4, "hut": 2, "farm": 1, "food": 100, "wood": 60, "foodNeed": 0.35, "claimCost": 12, "auto.idle": true, "auto.feed": true, "auto.housing": true, "auto.claim": true } },
+      { "id": "hard", "name": "Hard", "desc": "Hungrier settlers, pricier land and slower arrivals.", "values": { "food": 15, "foodNeed": 0.7, "claimCost": 30, "growthRate": 0.08 } }
+    ],
+    "options": [
+      { "id": "settlers", "group": "Start", "label": "Starting settlers (they need housing)", "kind": "settlers", "type": "number", "min": 0, "max": 40, "step": 1, "default": 0 },
+      { "id": "hut", "group": "Start", "label": "Timber Huts", "kind": "building", "building": "hut", "type": "number", "min": 0, "max": 20, "step": 1, "default": 0 },
+      { "id": "farm", "group": "Start", "label": "Farms", "kind": "building", "building": "farm", "type": "number", "min": 0, "max": 10, "step": 1, "default": 0 },
+      { "id": "storehouse", "group": "Start", "label": "Storehouses", "kind": "building", "building": "storehouse", "type": "number", "min": 0, "max": 5, "step": 1, "default": 0 },
+      { "id": "food", "group": "Start", "label": "Starting food", "kind": "resource", "resource": "food", "type": "number", "min": 0, "max": 500, "step": 5 },
+      { "id": "wood", "group": "Start", "label": "Starting wood", "kind": "resource", "resource": "wood", "type": "number", "min": 0, "max": 500, "step": 5 },
+      { "id": "radius", "group": "Start", "label": "Starting land radius (tiles)", "kind": "rule", "path": "map.startRadius", "type": "number", "min": 1, "max": 4, "step": 1 },
+      { "id": "foodNeed", "group": "Rules", "label": "Food eaten per settler per second", "kind": "rule", "path": "pop.needs.food", "type": "number", "min": 0.1, "max": 1.5, "step": 0.05 },
+      { "id": "growthRate", "group": "Rules", "label": "Settler arrival speed", "kind": "rule", "path": "pop.growthRate", "type": "number", "min": 0.02, "max": 0.6, "step": 0.01 },
+      { "id": "starveRate", "group": "Rules", "label": "Starvation speed", "kind": "rule", "path": "pop.starveRate", "type": "number", "min": 0, "max": 0.5, "step": 0.01 },
+      { "id": "claimCost", "group": "Rules", "label": "Wood to claim the first tile", "kind": "rule", "path": "land.cost.wood", "type": "number", "min": 1, "max": 100, "step": 1 },
+      { "id": "claimGrowth", "group": "Rules", "label": "Claim price increase per tile held", "kind": "rule", "path": "land.growth.rate", "type": "number", "min": 0, "max": 1, "step": 0.05 },
+      { "id": "spoil", "group": "Rules", "label": "Food spoilage per second", "kind": "rule", "path": "resources.food.spoil", "type": "number", "min": 0, "max": 0.02, "step": 0.001 },
+      { "id": "penalty", "group": "Rules", "label": "Hauling loss per tile of distance", "kind": "rule", "path": "map.distancePenalty", "type": "number", "min": 0, "max": 0.3, "step": 0.01 },
+      { "id": "auto.idle", "group": "Automation", "label": "Auto-assign idle settlers to jobs", "kind": "auto", "auto": "idle", "type": "bool", "default": false },
+      { "id": "auto.feed", "group": "Automation", "label": "Move workers to food when it runs low", "kind": "auto", "auto": "feed", "type": "bool", "default": false },
+      { "id": "auto.housing", "group": "Automation", "label": "Build housing when the village is full", "kind": "auto", "auto": "housing", "type": "bool", "default": false },
+      { "id": "auto.claim", "group": "Automation", "label": "Claim land when building space runs out", "kind": "auto", "auto": "claim", "type": "bool", "default": false }
+    ]
+  },
   "land": { "cost": { "wood": 20 }, "growth": { "type": "linear", "rate": 0.25 } },
   "map": {
     "startRadius": 1, "freeRadius": 1, "distancePenalty": 0.08, "minEfficiency": 0.25, "centerIcon": "🏕️",

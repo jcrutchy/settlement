@@ -10,6 +10,13 @@
         <p class="hint">Saved in this browser.</p>
         <div id="display-body"></div>
     </div>
+    <div id="newgame-panel" class="panel hidden">
+        <h3>New game</h3>
+        <p class="hint">Starting a new game replaces your current run.</p>
+        <div id="newgame-body"></div>
+        <div class="ng-row"><span>Seed (optional)</span><input id="seed-in" type="text" placeholder="random"></div>
+        <div class="button-row" style="margin-top: 10px;"><button id="ng-start" class="btn-primary">Start new game</button><button id="ng-cancel">Cancel</button></div>
+    </div>
     <div id="sync-panel" class="panel hidden">
         <h3>GitHub Secret Gist Sync</h3>
         <p class="hint">Stored locally in your browser only. Never committed to Git.</p>
@@ -86,8 +93,7 @@
 
 <footer>
     <button id="local-save-btn" class="btn-subtle">Save Local</button>
-    <input id="seed-in" type="text" placeholder="seed (optional)" style="flex:1;margin:0 10px;min-width:0;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:6px 8px;font:0.8rem var(--font-mono);">
-    <button id="hard-reset-btn" class="btn-danger">New Run</button>
+        <button id="hard-reset-btn" class="btn-danger">New Game…</button>
 </footer>
 
 

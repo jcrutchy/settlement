@@ -1,5 +1,5 @@
 "use strict";
-let G, S, RES = {}, DEP = {}, quiet = false, hCache = null, placing = null, selTile = null, popFloor = 0, armedBtn = null, armTimer = null;
+let G, S, RES = {}, DEP = {}, quiet = false, hCache = null, placing = null, selTile = null, popFloor = 0, armedBtn = null, armTimer = null, armedCtx = null, G0 = "", GP = null, autoNote = false, lastAuto = 0, ngVals = {};
 const KEY = "settlement_save_v2", CREDS = "settlement_gist_creds", FILE = "settlement_save.json";
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -14,11 +14,11 @@ const dur = t => t >= 3600 ? (t / 3600).toFixed(1) + "h" : t >= 60 ? Math.round(
 const jobText = j => (j.inputs ? ioStr(j.inputs) + " → " : "") + ioStr(j.outputs)
     + (j.slots ? ` · needs ${G.buildings.find(b => b.id === j.slots.building).name} (${j.slots.per} workers each)` : "")
     + (j.deposit && S.dep[j.deposit].cap <= 0 ? ` · you own no ${[].concat(DEP[j.deposit].terrain).join("/")} tiles yet` : "");
-function armed(btn, label, fn) { // two-tap confirm that works on phones (no native dialogs)
-    if (armedBtn === btn) { clearTimeout(armTimer); armedBtn = null; btn.textContent = btn.dataset.orig; return fn(); }
+function armed(btn, label, fn, ctx) { // two-tap confirm that works on phones (no native dialogs); ctx ties it to what was selected when armed
+    if (armedBtn === btn && armedCtx === ctx) { clearTimeout(armTimer); armedBtn = null; btn.textContent = btn.dataset.orig; return fn(); }
     if (armedBtn) armedBtn.textContent = armedBtn.dataset.orig;
-    armedBtn = btn; btn.dataset.orig = btn.dataset.orig || btn.textContent; btn.textContent = label;
-    clearTimeout(armTimer); armTimer = setTimeout(() => { armedBtn = null; btn.textContent = btn.dataset.orig; }, 4000);
+    armedBtn = btn; armedCtx = ctx; btn.dataset.orig = btn.dataset.orig || btn.textContent; btn.textContent = label;
+    clearTimeout(armTimer); armTimer = setTimeout(() => { armedBtn = null; btn.textContent = btn.dataset.orig; }, 8000);
 }
 
 // Seeded PRNG (mulberry32): same seed -> same world on every device
@@ -41,7 +41,7 @@ function newState(seed, prev) {
 }
 
 function ensure() { // fills in anything new in gamedata.json, and repairs NaN left by older versions
-    setWorld(S.seed); S.tech = S.tech || {};
+    setWorld(S.seed); S.tech = S.tech || {}; S.auto = S.auto || {}; S.rules = S.rules || {};
     G.resources.forEach(r => { if (S.res[r.id] !== undefined && !Number.isFinite(S.res[r.id])) S.res[r.id] = r.initial || 0; });
     G.deposits.forEach(d => { const p = S.dep[d.id]; if (p && !(Number.isFinite(p.amt) && Number.isFinite(p.cap))) { const k = poolCap(S, d); S.dep[d.id] = { cap: k, amt: k }; } });
     G.resources.forEach(r => { if (S.res[r.id] === undefined) S.res[r.id] = r.initial || 0; });
@@ -50,7 +50,7 @@ function ensure() { // fills in anything new in gamedata.json, and repairs NaN l
     G.deposits.forEach(d => { if (!S.dep[d.id]) { const k = poolCap(S, d); S.dep[d.id] = { cap: k, amt: k }; } });
 }
 
-function startNew(seed, prev) { H = null; try { localStorage.removeItem(HKEY); } catch (e) { /* ignore */ } S = newState(seed, prev); hCache = placing = selTile = null; ensure(); recenter(); checkUnlocks(true); }
+// startNew is defined with the new-game options below
 
 // --- DATA-DRIVEN RULES ---
 function met(c) {
@@ -211,6 +211,10 @@ function step(dt) {
         const s = S.dep[d.id], seed = Math.max(s.amt, 0.02 * s.cap);
         s.amt = Math.max(0, Math.min(s.cap, s.amt - (harvest[d.id] || 0) * dt + (s.cap > 0 ? d.regrow * seed * (1 - s.amt / s.cap) * dt : 0)));
     });
+    if (S.pop > housing()) { // settlers without a roof drift away (demolishing homes has a cost)
+        S.crowd = (S.crowd || 0) + (G.pop.overcrowdRate ?? 0.02) * dt;
+        if (S.crowd >= 1) { S.crowd -= 1; if (S.pop > popFloor) { S.pop--; trimJobs(); log("A settler left: not enough housing.", true); } }
+    } else S.crowd = 0;
     if (S.res.food <= 0 && S.pop > 0) { // deterministic: progress accumulates, no dice
         S.starve += G.pop.starveRate * dt;
         if (S.starve >= 1) { S.starve -= 1; if (S.pop > popFloor) { S.pop--; trimJobs(); log("Starvation! A settler has left the camp.", true); } }
@@ -306,20 +310,24 @@ function research(id) {
     spend(q.cost); S.tech[id] = true; S.rev++; hCache = null;
     log(`Researched ${q.name}.`); checkUnlocks(); renderAll();
 }
-function claimTile() {
-    const c = claimCost();
-    if (!selTile || S.own[selTile]) return;
-    const [x, y] = selTile.split(",").map(Number);
-    if (!claimable(x, y) || !afford(c)) return;
-    spend(c); S.own[selTile] = { x, y, b: null }; S.claims++; S.rev++; hCache = null;
+function claimAt(x, y) { // pays for and claims one tile; returns whether it happened
+    const c = claimCost(), k = K(x, y);
+    if (S.own[k] || !claimable(x, y) || !afford(c)) return false;
+    spend(c); S.own[k] = { x, y, b: null }; S.claims++; S.rev++; hCache = null;
     const tid = terrainAt(x, y);
-    G.deposits.filter(q => dterr(q).includes(tid)).forEach(d => { const k = tileCap(d, x, y); S.dep[d.id].cap += k; S.dep[d.id].amt += k; });
-    log(`Claimed a ${tid} tile.`); selTile = null; renderAll();
+    G.deposits.filter(q => dterr(q).includes(tid)).forEach(d => { const cap = tileCap(d, x, y); S.dep[d.id].cap += cap; S.dep[d.id].amt += cap; });
+    log(`Claimed a ${tid} tile.`); return true;
+}
+function claimTile() {
+    if (!selTile) return;
+    const [x, y] = selTile.split(",").map(Number);
+    if (claimAt(x, y)) { selTile = null; renderAll(); }
 }
 
 // --- UI ---
 function log(msg, spam) {
     if (spam && quiet) return;
+    if (autoNote) msg = "Auto: " + msg;
     S.logs.unshift(`[${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}] ${msg}`);
     S.logs.length = Math.min(S.logs.length, 20);
     if (!quiet) renderLogs();
@@ -357,7 +365,8 @@ function renderMap() { // info line and buttons, then the canvas
     cb.style.display = !mv && xy && !t && claimable(xy[0], xy[1]) ? "" : "none";
     cb.textContent = `Claim (${costStr(claimCost())})`;
     mb.style.display = db.style.display = canEdit ? "" : "none";
-    if (canEdit) { mb.textContent = `Move (${costStr(moveCost(bOf(t.b)))})`; db.textContent = "Demolish"; }
+    if (canEdit) { mb.textContent = `Move (${costStr(moveCost(bOf(t.b)))})`; if (!(armedBtn === db && armedCtx === selTile)) { if (armedBtn === db) armedBtn = null; db.textContent = "Demolish"; } } // a pending confirm survives re-renders
+    else if (armedBtn === db) { armedBtn = null; db.textContent = "Demolish"; }
     drawMap();
 }
 
@@ -421,7 +430,9 @@ function renderDisplayUI() {
         return mk("label", { className: "hint", style: "display:block;margin:4px 0;" }, mk("input", { type: "checkbox", checked: !!cur, onchange: e => { (SETTINGS.render.options[SETTINGS.render.renderer] = SETTINGS.render.options[SETTINGS.render.renderer] || {})[o.id] = e.target.checked; saveSettings(); drawMap(); } }), " " + o.label);
     });
     const height = mk("input", { type: "range", min: 30, max: 90, value: SETTINGS.layout.mapHeightVh, oninput: e => { SETTINGS.layout.mapHeightVh = +e.target.value; applyLayout(); drawMap(); }, onchange: saveSettings });
-    box.replaceChildren(row("Graphics", pick), ...opts, row("Map height", height));
+    const autos = ((GP.newGame && GP.newGame.options) || []).filter(o => o.kind === "auto").map(o => mk("label", { className: "hint", style: "display:block;margin:4px 0;" },
+        mk("input", { type: "checkbox", checked: !!(S.auto || {})[o.auto], onchange: e => { S.auto = S.auto || {}; S.auto[o.auto] = e.target.checked; S.rev++; saveLocal(); } }), " " + o.label));
+    box.replaceChildren(row("Graphics", pick), ...opts, row("Map height", height), mk("h3", { textContent: "Automation (saved with this run)" }), ...autos);
 }
 
 function bindMap() { // drag to pan, wheel/pinch/buttons to zoom, tap to select
@@ -504,7 +515,7 @@ function renderDynamic() {
     G.buildings.forEach(b => {
         const c = costOf(b);
         set("bld-name-" + b.id, `${b.name} (${S.bld[b.id]})`);
-        set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)}${b.terrain ? " • On: " + b.terrain.join("/") : ""}`);
+        set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)}${b.terrain ? " • On: " + b.terrain.join("/") : ""}${b.near ? " • Next to: " + b.near.join("/") : ""}${canPlace(b) ? "" : " • no free tile suits it: claim more land"}`);
         const btn = $("bld-btn-" + b.id); if (btn) btn.disabled = !(afford(c) && canPlace(b));
     });
 }
@@ -534,6 +545,141 @@ function sampleHist(force) {
     pushTier(0, [now, S.pop, housing(), getIdle(), ownedCount()]
         .concat(G.resources.flatMap(r => [r2(S.res[r.id]), r2(R[r.id].p), r2(R[r.id].c)]), G.deposits.map(d => r2(S.dep[d.id].amt))));
     try { localStorage.setItem(HKEY, JSON.stringify(H)); } catch (e) { /* storage full: stats stop persisting, the game is unaffected */ }
+}
+
+// --- NEW GAME OPTIONS, RULE OVERRIDES AND AUTOMATION ---
+// gamedata.json "newGame" lists presets and options. "rule" options override any number in the data by dotted path
+// (arrays of objects are searched by id, e.g. resources.food.spoil); the overrides are saved with the run.
+const mk = (tag, p = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, p); e.append(...kids); return e; };
+function getPath(o, path) { let cur = o; for (const k of path.split(".")) { cur = Array.isArray(cur) ? cur.find(x => x.id === k) : cur && cur[k]; if (cur === undefined || cur === null) return undefined; } return cur; }
+function setPath(o, path, v) { const seg = path.split("."), last = seg.pop(), cur = seg.length ? getPath(o, seg.join(".")) : o; if (!cur || Array.isArray(cur)) return false; cur[last] = v; return true; }
+function applyRules(rules) { // working copy of the game data = pristine data plus this run's overrides
+    G = JSON.parse(G0); G.techs = G.techs || [];
+    for (const p in rules || {}) setPath(G, p, rules[p]);
+    [RES, DEP, TD].forEach(m => Object.keys(m).forEach(k => delete m[k]));
+    G.resources.forEach(r => RES[r.id] = r); G.deposits.forEach(d => DEP[d.id] = d); G.map.terrain.forEach(t => TD[t.id] = t);
+    TCACHE.clear();
+}
+const optDefault = o => o.default !== undefined ? o.default : o.kind === "rule" ? getPath(GP, o.path) : o.kind === "resource" ? (GP.resources.find(r => r.id === o.resource).initial || 0) : o.type === "bool" ? false : 0;
+
+function startNew(seed, prev, vals) {
+    vals = vals || {};
+    H = null; try { localStorage.removeItem(HKEY); } catch (e) { /* ignore */ }
+    const opts = (GP.newGame && GP.newGame.options) || [], val = o => vals[o.id] !== undefined ? vals[o.id] : optDefault(o), rules = {};
+    opts.filter(o => o.kind === "rule").forEach(o => { const v = val(o); if (v !== optDefault(o)) rules[o.path] = v; });
+    applyRules(rules);
+    S = newState(seed, prev); S.rules = rules; S.auto = {};
+    hCache = placing = selTile = null; ensure();
+    opts.forEach(o => {
+        const v = val(o);
+        if (o.kind === "auto") S.auto[o.auto] = !!v;
+        else if (o.kind === "settlers") S.pop = v;
+        else if (o.kind === "building") for (let k = 0; k < v; k++) { const t = bestTile(o.building); if (!t) break; t.b = o.building; S.bld[o.building]++; }
+    });
+    hCache = null;
+    opts.filter(o => o.kind === "resource").forEach(o => { S.res[o.resource] = Math.min(capOf(o.resource), val(o)); });
+    recenter(); checkUnlocks(true);
+}
+
+function openNewGame() {
+    const ng = GP.newGame || { presets: [], options: [] }, box = $("newgame-body"), vals = ngVals = {};
+    const housingOf = id => GP.buildings.find(b => b.id === id).effects.filter(e => e.type === "housing").reduce((a, e) => a + e.value, 0);
+    let preset = ng.presets[0] ? ng.presets[0].id : null;
+    const fill = () => { const p = ng.presets.find(x => x.id === preset) || { values: {} }; ng.options.forEach(o => { vals[o.id] = p.values[o.id] !== undefined ? p.values[o.id] : optDefault(o); }); };
+    const draw = () => {
+        const warn = mk("p", { className: "hint", style: "color:#fca5a5;" });
+        const upd = () => { const room = ng.options.filter(o => o.kind === "building").reduce((a, o) => a + (+vals[o.id] || 0) * housingOf(o.building), 0), n = +vals.settlers || 0; warn.textContent = n > room ? `${n} settlers but housing for only ${room}: the extra ${n - room} will drift away. Add huts or lower the settlers.` : ""; };
+        const pick = mk("select", { onchange: e => { preset = e.target.value; fill(); draw(); } }, ...ng.presets.map(p => mk("option", { value: p.id, textContent: p.name })));
+        pick.value = preset;
+        const field = o => {
+            const input = o.kind === "auto" || o.type === "bool"
+                ? mk("input", { type: "checkbox", checked: !!vals[o.id], onchange: e => { vals[o.id] = e.target.checked; } })
+                : mk("input", { type: "number", min: o.min, max: o.max, step: o.step || 1, value: vals[o.id], onchange: e => { const n = parseFloat(e.target.value); vals[o.id] = isFinite(n) ? Math.max(o.min, Math.min(o.max, n)) : optDefault(o); e.target.value = vals[o.id]; upd(); } });
+            return mk("div", { className: "ng-row" }, mk("span", { textContent: o.label }), input);
+        };
+        const groups = [...new Set(ng.options.map(o => o.group || "Options"))], p = ng.presets.find(x => x.id === preset);
+        box.replaceChildren(mk("div", { className: "ng-row" }, mk("span", { textContent: "Preset" }), pick), mk("p", { className: "hint", textContent: p ? p.desc : "" }),
+            ...groups.flatMap(g => [mk("h3", { textContent: g }), ...ng.options.filter(o => (o.group || "Options") === g).map(field)]), warn);
+        upd();
+    };
+    fill(); draw(); $("newgame-panel").classList.remove("hidden"); window.scrollTo(0, 0);
+}
+
+// Automation: for casual play. Runs on live ticks only (not while the game is closed). Assignment is checked every tick;
+// building and claiming do at most one thing every 3 seconds and keep a spending reserve.
+const autoCount = () => Object.values(S.bld).reduce((a, b) => a + b, 0) + S.claims;
+const autoDo = fn => { const n = autoCount(); autoNote = true; fn(); autoNote = false; return autoCount() > n; };
+function autoAssign() { // put idle settlers where the lowest or draining stockpiles need them
+    let did = false;
+    for (let n = getIdle(); n > 0; n--) {
+        const R = flows(1).R; let best = null, top = 0;
+        G.jobs.forEach(j => {
+            if (!S.unlocked["job:" + j.id] || S.jobs[j.id] >= slotCap(j)) return;
+            if (j.deposit && !(S.dep[j.deposit].cap > 0 && S.dep[j.deposit].amt > 1)) return;
+            if (Object.keys(j.inputs || {}).some(k => S.res[k] < 5)) return; // would stand idle without inputs
+            let need = 0;
+            Object.keys(j.outputs).forEach(k => {
+                const lvl = Math.min(1, S.res[k] / capOf(k)); let w = 1 - lvl;
+                if (R[k].p - R[k].c < 0) w += 0.5;
+                if (G.pop.needs[k]) w *= 3;
+                if (lvl >= 0.98) w = 0;
+                need = Math.max(need, w);
+            });
+            if (need > top) { top = need; best = j; }
+        });
+        if (!best) break;
+        S.jobs[best.id]++; did = true;
+    }
+    if (did) S.rev++;
+    return did;
+}
+function autoFeed() { // if an essential need is draining, move a worker from the biggest unrelated job to a job that makes it
+    const R = flows(1).R;
+    for (const k of Object.keys(G.pop.needs)) {
+        if (R[k].p - R[k].c >= 0 || S.res[k] > 0.3 * capOf(k)) continue;
+        const gain = j => j.outputs[k] * (j.deposit ? haul(j.deposit).eff : 1);
+        const makers = G.jobs.filter(j => j.outputs[k] && S.unlocked["job:" + j.id] && S.jobs[j.id] < slotCap(j) && (!j.deposit || (S.dep[j.deposit].cap > 0 && S.dep[j.deposit].amt > 1))).sort((a, b) => gain(b) - gain(a));
+        const from = G.jobs.filter(j => !j.outputs[k] && S.jobs[j.id] > 0).sort((a, b) => S.jobs[b.id] - S.jobs[a.id])[0];
+        if (!makers.length || !from) continue;
+        S.jobs[from.id]--; S.jobs[makers[0].id]++; S.rev++;
+        autoNote = true; log(`moved a ${from.name} to ${makers[0].name}: ${RES[k].name} is running low.`); autoNote = false; return true;
+    }
+    return false;
+}
+function autoHousing() { // build the best affordable housing when the village is full and food can support growth
+    if (S.pop < housing() || S.res.food < G.pop.growthFoodMin) return false;
+    const f = flows(1).R.food; if (f.p - f.c < 0 && S.res.food < 40) return false;
+    const gain = b => b.effects.filter(e => e.type === "housing").reduce((a, e) => a + e.value, 0);
+    let best = null, top = 0;
+    G.buildings.forEach(b => {
+        if (!S.unlocked["bld:" + b.id] || !gain(b) || !canPlace(b)) return;
+        const c = costOf(b); if (!Object.entries(c).every(([k, v]) => S.res[k] >= v * 1.1)) return;
+        const sc = gain(b) / (1 + sum(c) / 100); if (sc > top) { top = sc; best = b; }
+    });
+    return best ? autoDo(() => build(best.id)) : false;
+}
+function autoClaim() { // when fewer than two free building tiles remain, claim the most useful neighbouring tile
+    if (owned().filter(t => !t.b && !TD[terrainAt(t.x, t.y)].water).length >= 2) return false;
+    const c = claimCost(); if (!Object.entries(c).every(([k, v]) => S.res[k] >= v * 1.5)) return false;
+    let best = null, top = -Infinity;
+    owned().forEach(t => nb4.forEach(([dx, dy]) => {
+        const x = t.x + dx, y = t.y + dy; if (!claimable(x, y)) return;
+        const tid = terrainAt(x, y), td = TD[tid];
+        const sc = (td.water ? -3 : 1) - dist({ x, y }, S.center) * 0.3 + (G.deposits.some(d => dterr(d).includes(tid) && S.dep[d.id].cap === 0) ? 1.5 : 0);
+        if (sc > top) { top = sc; best = [x, y]; }
+    }));
+    return best ? autoDo(() => claimAt(best[0], best[1])) : false;
+}
+function runAuto() {
+    const a = S.auto || {}; let acted = false;
+    if (a.idle && getIdle() > 0 && autoAssign()) acted = true;
+    const now = Date.now();
+    if (now - lastAuto < 3000) return acted;
+    lastAuto = now;
+    if (a.feed && autoFeed()) acted = true;
+    else if (a.housing && autoHousing()) acted = true;
+    else if (a.claim && autoClaim()) acted = true;
+    return acted;
 }
 
 // --- PERSISTENCE & SECRET GIST SYNC ---
@@ -591,7 +737,7 @@ async function pull() {
         const cloud = await gistGet(c);
         if (!cloud || cloud.version !== 4) throw new Error("No v0.4 save in the gist yet. Push one first.");
         if (S.rev > S.cloudRev && !confirm("This device has progress that hasn't been pushed. Replace it with the cloud save?")) return setStatus("Pull cancelled.");
-        S = cloud; S.cloudRev = S.rev; hCache = placing = selTile = null; ensure(); recenter(); advance(); saveLocal(); renderAll();
+        S = cloud; S.cloudRev = S.rev; hCache = placing = selTile = null; applyRules(S.rules); ensure(); recenter(); advance(); saveLocal(); renderAll(); renderDisplayUI();
         setStatus("Loaded cloud save.");
     } catch (e) { setStatus("Pull failed: " + e.message, true); }
 }
@@ -604,12 +750,15 @@ function bindEvents() {
     $("pull-gist-btn").onclick = pull;
     $("claim-tile-btn").onclick = claimTile;
     $("move-btn").onclick = startMove; bindMap();
-    $("demolish-btn").onclick = () => armed($("demolish-btn"), "Tap again: demolish", demolish);
+    $("demolish-btn").onclick = () => armed($("demolish-btn"), "Tap again: demolish", demolish, selTile);
     $("local-save-btn").onclick = () => { saveLocal(); log("Game saved locally."); };
-    $("hard-reset-btn").onclick = () => armed($("hard-reset-btn"), "Tap again: replace this run", () => {
+    $("hard-reset-btn").onclick = openNewGame;
+    $("ng-cancel").onclick = () => $("newgame-panel").classList.add("hidden");
+    $("ng-start").onclick = () => {
         const t = $("seed-in").value.trim();
-        startNew(t ? toSeed(t) : randSeed(), S); saveLocal(); renderAll(); log(`New run started (seed ${S.seed}).`);
-    });
+        startNew(t ? toSeed(t) : randSeed(), S, ngVals); saveLocal(); $("newgame-panel").classList.add("hidden"); $("seed-in").value = "";
+        renderAll(); renderDisplayUI(); log(`New run started (seed ${S.seed}).`);
+    };
     window.addEventListener("pagehide", saveLocal);
     document.addEventListener("visibilitychange", () => {
         if (document.hidden) { saveLocal(); sampleHist(true); push(true); }
@@ -623,15 +772,14 @@ async function fetchFresh(u) { // revalidate with the server; use the cached cop
 }
 
 async function init() {
-    G = await (await fetchFresh("gamedata.json")).json();
-    G.techs = G.techs || []; G.resources.forEach(r => RES[r.id] = r); G.deposits.forEach(d => DEP[d.id] = d); G.map.terrain.forEach(t => TD[t.id] = t);
+    G0 = await (await fetchFresh("gamedata.json")).text(); GP = JSON.parse(G0); applyRules({});
     document.title = G.meta.title; $("game-h1").textContent = G.meta.title;
     S = loadLocal();
-    if (S) { ensure(); recenter(); } else startNew(randSeed());
+    if (S) { applyRules(S.rules); ensure(); recenter(); } else startNew(randSeed());
     await loadSettings(); applyLayout(); await useRenderer(); renderDisplayUI();
     loadCredsUI(); syncUI(); bindEvents();
     advance(); checkUnlocks(); renderAll();
-    setInterval(() => { advance() ? renderAll() : renderDynamic(); sampleHist(); }, 1000);
+    setInterval(() => { const a = advance(), b = runAuto(); a || b ? renderAll() : renderDynamic(); sampleHist(); }, 1000);
     setInterval(saveLocal, G.meta.autoSaveMs);
 }
 init();

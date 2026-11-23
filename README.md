@@ -44,6 +44,12 @@ The token and gist ID are stored only in that browser's local storage. Each save
 | `tree.html`, `tree.js` | Read-only tech tree: what unlocks, costs and feeds what |
 | `stats.html`, `stats.js` | Live charts of stockpiles, rates, population and deposits (see below) |
 
+## New game options and automation
+
+**New Game…** (footer) opens a panel with presets (Standard, Relaxed, Hard) and every option listed under `newGame` in `gamedata.json`: starting settlers, starting buildings and resources, starting land radius, and rule tweaks such as food eaten per settler, arrival and starvation speed, claim prices, spoilage and hauling loss. Rule options override a number in the game data by dotted path (for example `resources.food.spoil`), and the overrides are saved with the run. To expose another number, add an option with `"kind": "rule"` and its path; the checker verifies that the path exists.
+
+**Automation** is for casual play and can be switched on or off at any time under **Display**: assign idle settlers to the jobs that need them most, move workers to food when it runs low, build housing when the village is full, and claim land when building space runs out. Automation only acts while the game is open, and it keeps a spending reserve so it won't drain your stockpiles.
+
 ## Display and graphics
 
 The **Display** button in the game header picks the graphics (renderer) and map height, and the choice is saved per browser. `settings.json` holds the defaults and the list of available renderers.

@@ -120,7 +120,7 @@
 
         // population + land
         if (!G.pop || !G.pop.needs) err("pop", "missing pop.needs"); else checkMap(G.pop.needs, "pop", "needs");
-        if (G.pop) ["growthRate", "growthFoodMin", "starveRate"].forEach(k => { if (!isNum(G.pop[k])) err("pop", `${k} must be a number`); });
+        if (G.pop) ["growthRate", "growthFoodMin", "starveRate", "overcrowdRate"].forEach(k => { if (!isNum(G.pop[k])) err("pop", `${k} must be a number`); });
         const L = G.land;
         if (!L) err("land", "missing land block"); else {
             checkMap(L.cost, "land", "cost"); checkGrowth(L.growth, "land");
@@ -141,6 +141,22 @@
                 if (!M.terrain.some(t => !t.gen)) err("map", "no fallback terrain: one terrain must have no gen rules so every tile matches something");
             }
             if (!buildings.some(b => (b.effects || []).some(e => e.type === "depot"))) warn("map", "no building has a depot effect, so hauling distance can never be reduced");
+        }
+        // new-game options: every rule path must point at a real number in this file
+        if (G.newGame !== undefined) {
+            const getP = (o, p) => { let cur = o; for (const s of p.split(".")) { cur = Array.isArray(cur) ? cur.find(x => x.id === s) : cur && cur[s]; if (cur === undefined || cur === null) return undefined; } return cur; };
+            const oid = new Set();
+            (G.newGame.options || []).forEach(o => {
+                const w = `newGame option "${o.id}"`;
+                if (!o.id || oid.has(o.id)) err(w, "missing or duplicate id"); oid.add(o.id);
+                if (!["settlers", "building", "resource", "rule", "auto"].includes(o.kind)) err(w, "kind must be settlers, building, resource, rule or auto");
+                if (o.kind === "building" && !ids.buildings.has(o.building)) err(w, `unknown building "${o.building}"`);
+                if (o.kind === "resource" && !hasRes(o.resource)) err(w, `unknown resource "${o.resource}"`);
+                if (o.kind === "rule" && typeof getP(G, o.path) !== "number") err(w, `path "${o.path}" does not point at a number in this file`);
+                if (o.kind === "auto" && !o.auto) err(w, "needs an auto key");
+                if (o.kind !== "auto" && (!isNum(o.min) || !isNum(o.max) || o.max < o.min)) err(w, "needs numeric min and max (max >= min)");
+            });
+            (G.newGame.presets || []).forEach(p => { for (const k in p.values || {}) if (!oid.has(k)) err(`newGame preset "${p.id}"`, `sets unknown option "${k}"`); });
         }
         if (!G.meta) err("meta", "missing meta block");
 

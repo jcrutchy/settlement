@@ -156,7 +156,7 @@ function settings() {
     const num = (o, k) => field(k, numIn(o[k], v => { if (v !== undefined) { o[k] = v; changed(); } }));
     return h("div", {},
         h("section", { class: "panel ed" }, h("h2", { textContent: "Game" }), txt(D.meta, "title"), ["liveStepSec", "offlineStepSec", "maxOfflineSec", "autoSaveMs"].map(k => num(D.meta, k))),
-        h("section", { class: "panel ed" }, h("h2", { textContent: "Population" }), field("needs (per villager per second)", mapEd(D.pop, "needs", "resources", 0)), ["growthRate", "growthFoodMin", "starveRate"].map(k => num(D.pop, k))),
+        h("section", { class: "panel ed" }, h("h2", { textContent: "Population" }), field("needs (per villager per second)", mapEd(D.pop, "needs", "resources", 0)), ["growthRate", "growthFoodMin", "starveRate", "overcrowdRate"].map(k => num(D.pop, k))),
         h("section", { class: "panel ed" }, h("h2", { textContent: "Land (per tile claimed)" }),
             field("cost of the first claim", mapEd(D.land, "cost", "resources", 0)), field("cost growth per claim", growthEd(D.land, 0))),
         h("section", { class: "panel ed" }, h("h2", { textContent: "Map" }), ["startRadius", "freeRadius", "distancePenalty", "minEfficiency"].map(k => num(D.map, k)),
