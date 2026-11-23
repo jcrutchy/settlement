@@ -48,7 +48,7 @@ The token and gist ID are stored only in that browser's local storage. Each save
 
 **New Game…** (footer) opens a panel with presets (Standard, Relaxed, Hard) and every option listed under `newGame` in `gamedata.json`: starting settlers, starting buildings and resources, starting land radius, and rule tweaks such as food eaten per settler, arrival and starvation speed, claim prices, spoilage and hauling loss. Rule options override a number in the game data by dotted path (for example `resources.food.spoil`), and the overrides are saved with the run. To expose another number, add an option with `"kind": "rule"` and its path; the checker verifies that the path exists.
 
-**Automation** is for casual play and can be switched on or off at any time under **Display**: assign idle settlers to the jobs that need them most, move workers to food when it runs low, build housing when the village is full, and claim land when building space runs out. Automation only acts while the game is open, and it keeps a spending reserve so it won't drain your stockpiles.
+**Automation** is for casual play and can be switched on or off at any time under **Display**: assign idle settlers to the jobs that need them most, move workers to food when it runs low, build storehouses when stockpiles are full or hauling is poor, build housing when the village is full, and claim land when building space runs out or a wanted deposit is missing. Purchases are prioritised (food, then storage, then housing, then land), and a purchase that is being saved up for is not spent on something lower down the list. Automation only acts while the game is open, and it keeps a spending reserve so it won't drain your stockpiles.
 
 ## Display and graphics
 

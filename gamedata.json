@@ -5,7 +5,7 @@
     "presets": [
       { "id": "standard", "name": "Standard", "desc": "Start with nothing in a clearing and build up from there.", "values": {} },
       { "id": "relaxed", "name": "Relaxed", "desc": "A small village to begin with, gentler rules, and all automation switched on.",
-        "values": { "settlers": 4, "hut": 2, "farm": 1, "food": 100, "wood": 60, "foodNeed": 0.35, "claimCost": 12, "auto.idle": true, "auto.feed": true, "auto.housing": true, "auto.claim": true } },
+        "values": { "settlers": 4, "hut": 2, "farm": 1, "food": 100, "wood": 60, "foodNeed": 0.35, "claimCost": 12, "auto.idle": true, "auto.feed": true, "auto.storage": true, "auto.housing": true, "auto.claim": true } },
       { "id": "hard", "name": "Hard", "desc": "Hungrier settlers, pricier land and slower arrivals.", "values": { "food": 15, "foodNeed": 0.7, "claimCost": 30, "growthRate": 0.08 } }
     ],
     "options": [
@@ -24,7 +24,8 @@
       { "id": "spoil", "group": "Rules", "label": "Food spoilage per second", "kind": "rule", "path": "resources.food.spoil", "type": "number", "min": 0, "max": 0.02, "step": 0.001 },
       { "id": "penalty", "group": "Rules", "label": "Hauling loss per tile of distance", "kind": "rule", "path": "map.distancePenalty", "type": "number", "min": 0, "max": 0.3, "step": 0.01 },
       { "id": "auto.idle", "group": "Automation", "label": "Auto-assign idle settlers to jobs", "kind": "auto", "auto": "idle", "type": "bool", "default": false },
-      { "id": "auto.feed", "group": "Automation", "label": "Move workers to food when it runs low", "kind": "auto", "auto": "feed", "type": "bool", "default": false },
+      { "id": "auto.feed", "group": "Automation", "label": "Keep food supplied (move workers, build farms)", "kind": "auto", "auto": "feed", "type": "bool", "default": false },
+      { "id": "auto.storage", "group": "Automation", "label": "Build storehouses when stockpiles are full", "kind": "auto", "auto": "storage", "type": "bool", "default": false },
       { "id": "auto.housing", "group": "Automation", "label": "Build housing when the village is full", "kind": "auto", "auto": "housing", "type": "bool", "default": false },
       { "id": "auto.claim", "group": "Automation", "label": "Claim land when building space runs out", "kind": "auto", "auto": "claim", "type": "bool", "default": false }
     ]

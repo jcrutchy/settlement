@@ -609,23 +609,44 @@ function openNewGame() {
 // building and claiming do at most one thing every 3 seconds and keep a spending reserve.
 const autoCount = () => Object.values(S.bld).reduce((a, b) => a + b, 0) + S.claims;
 const autoDo = fn => { const n = autoCount(); autoNote = true; fn(); autoNote = false; return autoCount() > n; };
-function autoAssign() { // put idle settlers where the lowest or draining stockpiles need them
+const yieldOf = j => { if (!j.deposit) return 1; const d = S.dep[j.deposit]; return DEP[j.deposit].regrow ? (d.cap > 0 ? d.amt / d.cap : 0) : (d.amt > 0 ? 1 : 0); };
+const workersOn = d => G.jobs.reduce((w, j) => w + (j.deposit === d.id ? S.jobs[j.id] : 0), 0);
+const sustain = d => { // workers a regrowing deposit can feed without being stripped bare: harvest at half density equals peak regrowth
+    if (!d.regrow) return Infinity;
+    const cap = S.dep[d.id].cap, j = G.jobs.find(x => x.deposit === d.id), rate = (j && j.outputs[d.resource]) || 1;
+    return cap > 0 ? Math.max(1, Math.floor(d.regrow * cap / (2 * rate))) : 0;
+};
+function autoTrim() { // release a worker from an input-starved job or an over-staffed deposit so it can be reassigned elsewhere
+    const R = flows(1).R;
+    for (const j of G.jobs) {
+        if (S.jobs[j.id] > 0 && Object.keys(j.inputs || {}).some(k => S.res[k] < 1 && netOf(R, k) <= 0)) { S.jobs[j.id]--; S.rev++; autoNote = true; log(`released a ${j.name}: out of ${Object.keys(j.inputs).map(k => RES[k].name).join("/")}.`); autoNote = false; return true; }
+    }
+    for (const d of G.deposits) {
+        const n = workersOn(d); if (!d.regrow || n < 2) continue;
+        const s0 = S.dep[d.id], thin = s0.cap > 0 && s0.amt / s0.cap < 0.25;
+        if (n <= sustain(d) + 1 && !thin) continue;
+        const j = G.jobs.filter(x => x.deposit === d.id && S.jobs[x.id] > 0).sort((a, b) => S.jobs[b.id] - S.jobs[a.id])[0];
+        S.jobs[j.id]--; S.rev++; autoNote = true; log(`released a ${j.name}: ${d.name} is running thin.`); autoNote = false; return true;
+    }
+    return false;
+}
+function autoAssign() { // put idle settlers where something is actually needed: low food first, then whatever the next purchases lack
     let did = false;
     for (let n = getIdle(); n > 0; n--) {
-        const R = flows(1).R; let best = null, top = 0;
+        const R = flows(1).R, want = wants(); let best = null, top = 0;
         G.jobs.forEach(j => {
             if (!S.unlocked["job:" + j.id] || S.jobs[j.id] >= slotCap(j)) return;
             if (j.deposit && !(S.dep[j.deposit].cap > 0 && S.dep[j.deposit].amt > 1)) return;
-            if (Object.keys(j.inputs || {}).some(k => S.res[k] < 5)) return; // would stand idle without inputs
-            let need = 0;
+            if (j.deposit && DEP[j.deposit].regrow && workersOn(DEP[j.deposit]) >= sustain(DEP[j.deposit])) return; // more hands would only strip the deposit
+            if (Object.keys(j.inputs || {}).some(k => S.res[k] < 5 || (netOf(R, k) < 0 && S.res[k] < 0.5 * capOf(k)))) return; // would stand idle, or deepen a shortage of its input
+            let score = 0;
             Object.keys(j.outputs).forEach(k => {
-                const lvl = Math.min(1, S.res[k] / capOf(k)); let w = 1 - lvl;
-                if (R[k].p - R[k].c < 0) w += 0.5;
-                if (G.pop.needs[k]) w *= 3;
-                if (lvl >= 0.98) w = 0;
-                need = Math.max(need, w);
+                let w;
+                if (G.pop.needs[k]) { const lvl = Math.min(1, S.res[k] / capOf(k)); w = ((1 - lvl) + (netOf(R, k) < 0 ? 0.5 : 0)) * 3; if (lvl >= 0.98) w = 0; }
+                else { const goal = (want[k] || 0) * 1.5; w = goal > 0 ? Math.max(0, (goal - S.res[k]) / goal) : 0.05; if (S.res[k] >= capOf(k) * 0.98) w = 0; }
+                score = Math.max(score, w * (1 + 0.5 * j.outputs[k] * yieldOf(j) * (j.deposit ? haul(j.deposit).eff : 1)));
             });
-            if (need > top) { top = need; best = j; }
+            if (score > top) { top = score; best = j; }
         });
         if (!best) break;
         S.jobs[best.id]++; did = true;
@@ -633,10 +654,18 @@ function autoAssign() { // put idle settlers where the lowest or draining stockp
     if (did) S.rev++;
     return did;
 }
-function autoFeed() { // if an essential need is draining, move a worker from the biggest unrelated job to a job that makes it
-    const R = flows(1).R;
+const netOf = (R, k) => R[k].p - R[k].c;
+// affordable with a spending cushion of f times the price, but never asking for more than the stockpile can hold
+const afford1 = (c, f) => Object.entries(c).every(([k, v]) => S.res[k] >= v && S.res[k] >= Math.min(v * f, capOf(k) * 0.98));
+const keeps = (c, reserve) => Object.entries(c).every(([k, v]) => S.res[k] - v >= (reserve[k] || 0));
+function addReserve(reserve, c, R) { // earmark a pending purchase, unless it is out of reach (then don't stall everything else)
+    if (!Object.keys(c).every(k => S.res[k] >= c[k] * 0.3 || netOf(R, k) > 0.01)) return;
+    for (const k in c) reserve[k] = Math.max(reserve[k] || 0, c[k]);
+}
+
+function autoFeed(R) { // an essential need is draining: move a worker from the biggest unrelated job to a job that makes it
     for (const k of Object.keys(G.pop.needs)) {
-        if (R[k].p - R[k].c >= 0 || S.res[k] > 0.3 * capOf(k)) continue;
+        if (netOf(R, k) >= 0 || S.res[k] > 0.3 * capOf(k)) continue;
         const gain = j => j.outputs[k] * (j.deposit ? haul(j.deposit).eff : 1);
         const makers = G.jobs.filter(j => j.outputs[k] && S.unlocked["job:" + j.id] && S.jobs[j.id] < slotCap(j) && (!j.deposit || (S.dep[j.deposit].cap > 0 && S.dep[j.deposit].amt > 1))).sort((a, b) => gain(b) - gain(a));
         const from = G.jobs.filter(j => !j.outputs[k] && S.jobs[j.id] > 0).sort((a, b) => S.jobs[b.id] - S.jobs[a.id])[0];
@@ -646,39 +675,119 @@ function autoFeed() { // if an essential need is draining, move a worker from th
     }
     return false;
 }
-function autoHousing() { // build the best affordable housing when the village is full and food can support growth
+function foodPlan(R) { // food is draining and no job has a free slot: the cheapest building that adds slots for a job making it
+    for (const k of Object.keys(G.pop.needs)) {
+        if (netOf(R, k) >= 0 || S.res[k] > 0.3 * capOf(k)) continue;
+        const slotted = G.jobs.filter(j => j.slots && j.outputs[k]);
+        if (slotted.some(j => S.unlocked["job:" + j.id] && S.jobs[j.id] < slotCap(j))) continue;
+        const cand = G.buildings.filter(b => S.unlocked["bld:" + b.id] && canPlace(b) && slotted.some(j => j.slots.building === b.id && (!j.deposit || S.dep[j.deposit].cap > 0))).sort((x, y) => sum(costOf(x)) - sum(costOf(y)));
+        if (cand[0]) return { b: cand[0], cost: costOf(cand[0]) };
+    }
+    return null;
+}
+
+function wants() { // the biggest single purchase of each resource that is currently on offer
+    const m = {}, add = c => { for (const k in c) m[k] = Math.max(m[k] || 0, c[k]); };
+    add(claimCost()); G.buildings.forEach(b => { if (S.unlocked["bld:" + b.id]) add(costOf(b)); });
+    G.techs.forEach(q => { if (S.unlocked["tech:" + q.id] && !S.tech[q.id]) add(q.cost); });
+    const req = c => { if (!c) return; (c.all || c.any || []).forEach(req); if (c.resource !== undefined) m[c.resource] = Math.max(m[c.resource] || 0, c.gte); };
+    G.buildings.forEach(b => { if (!S.unlocked["bld:" + b.id]) req(b.requires); }); // e.g. stone for a storehouse that is still locked
+    return m;
+}
+function storageNeeds(R) { // stockpiles that are full and wasting while still small next to what is being bought, or too small for the next claim
+    const w = wants(), need = new Set();
+    G.resources.forEach(r => { const k = r.id; if (S.unlocked["res:" + k] && w[k] && capOf(k) < 3 * w[k] && S.res[k] >= capOf(k) * 0.97 && netOf(R, k) > 0.01) need.add(k); });
+    if ((S.auto || {}).claim) { const cc = claimCost(); for (const k in cc) if (cc[k] > capOf(k)) need.add(k); }
+    return need;
+}
+function depotPlan() { // workers are hauling over long distances: a depot building that clearly improves it
+    const workers = d => G.jobs.reduce((w, j) => w + (j.deposit === d.id ? S.jobs[j.id] : 0), 0);
+    if (!G.deposits.some(d => workers(d) > 0 && haul(d.id).eff < 0.75)) return null;
+    const score = () => G.deposits.reduce((a, d) => a + haul(d.id).eff * (1 + workers(d)), 0);
+    let best = null, topGain = 0.05;
+    G.buildings.filter(b => S.unlocked["bld:" + b.id] && b.effects.some(e => e.type === "depot")).forEach(b => {
+        const t = bestTile(b.id); if (!t) return;
+        const before = score(); t.b = b.id; hCache = null; const gain = score() - before; t.b = null; hCache = null;
+        if (gain > topGain) { topGain = gain; best = b; }
+    });
+    return best;
+}
+function storagePlan(R) { // capacity for full stockpiles first, then a depot if hauling is poor
+    return capacityPlan(R) || depotPlan();
+}
+function capacityPlan(R) { // the best capacity building for the stockpiles that need it
+    const need = storageNeeds(R); if (!need.size) return null;
+    let best = null, top = 0;
+    G.buildings.forEach(b => {
+        if (!S.unlocked["bld:" + b.id]) return;
+        const val = b.effects.filter(e => e.type === "capacity" && (e.resource === "*" || need.has(e.resource))).reduce((a, e) => a + e.value * (e.resource === "*" ? need.size : 1), 0);
+        if (!val) return;
+        const sc = val / (1 + sum(costOf(b)) / 100); if (sc > top) { top = sc; best = b; }
+    });
+    return best;
+}
+
+function autoHousing(reserve) { // build the best affordable housing when the village is full and food can support growth
     if (S.pop < housing() || S.res.food < G.pop.growthFoodMin) return false;
     const f = flows(1).R.food; if (f.p - f.c < 0 && S.res.food < 40) return false;
     const gain = b => b.effects.filter(e => e.type === "housing").reduce((a, e) => a + e.value, 0);
     let best = null, top = 0;
     G.buildings.forEach(b => {
         if (!S.unlocked["bld:" + b.id] || !gain(b) || !canPlace(b)) return;
-        const c = costOf(b); if (!Object.entries(c).every(([k, v]) => S.res[k] >= v * 1.1)) return;
+        const c = costOf(b); if (!afford1(c, 1.1) || !keeps(c, reserve)) return;
         const sc = gain(b) / (1 + sum(c) / 100); if (sc > top) { top = sc; best = b; }
     });
     return best ? autoDo(() => build(best.id)) : false;
 }
-function autoClaim() { // when fewer than two free building tiles remain, claim the most useful neighbouring tile
-    if (owned().filter(t => !t.b && !TD[terrainAt(t.x, t.y)].water).length >= 2) return false;
-    const c = claimCost(); if (!Object.entries(c).every(([k, v]) => S.res[k] >= v * 1.5)) return false;
+function autoClaim(force, reserve) { // when building space runs out, or a wanted deposit is missing or thin, claim the most useful neighbouring tile
+    reserve = reserve || {};
+    const goal = new Set(), wnt = wants(); // terrains whose deposits we want more of
+    G.deposits.forEach(d => {
+        const e = S.dep[d.id], w = workersOn(d);
+        const thin = d.regrow && e.cap > 0 && w >= 2 && (e.amt / e.cap < 0.5 || (w >= sustain(d) && S.res[d.resource] < 1.5 * (wnt[d.resource] || 0)));
+        const missing = e.cap === 0 && S.res[d.resource] < 1.5 * (wnt[d.resource] || 0) && G.jobs.some(j => j.deposit === d.id);
+        if (thin || missing) dterr(d).forEach(t => goal.add(t));
+    });
+    if (!force && !goal.size && owned().filter(t => !t.b && !TD[terrainAt(t.x, t.y)].water).length >= 2) return false;
+    const c = claimCost(); if (!afford1(c, force ? 1 : 1.5) || !keeps(c, reserve)) return false;
+    const toward = (x, y) => { // how close is the nearest tile of a wanted terrain (0 = this one)
+        if (!goal.size) return 99;
+        for (let r = 0; r <= 10; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (Math.max(Math.abs(dx), Math.abs(dy)) === r && goal.has(terrainAt(x + dx, y + dy))) return r;
+        return 99;
+    };
     let best = null, top = -Infinity;
     owned().forEach(t => nb4.forEach(([dx, dy]) => {
         const x = t.x + dx, y = t.y + dy; if (!claimable(x, y)) return;
-        const tid = terrainAt(x, y), td = TD[tid];
-        const sc = (td.water ? -3 : 1) - dist({ x, y }, S.center) * 0.3 + (G.deposits.some(d => dterr(d).includes(tid) && S.dep[d.id].cap === 0) ? 1.5 : 0);
+        const tid = terrainAt(x, y), td = TD[tid], d0 = toward(x, y);
+        const sc = (td.water ? -3 : 1) - dist({ x, y }, S.center) * 0.3 + (G.deposits.some(d => dterr(d).includes(tid) && S.dep[d.id].cap === 0) ? 1.5 : 0) + (d0 === 0 ? 4 : Math.max(0, 3 - 0.4 * d0));
         if (sc > top) { top = sc; best = [x, y]; }
     }));
     return best ? autoDo(() => claimAt(best[0], best[1])) : false;
 }
-function runAuto() {
+function runAuto() { // priorities: food safety, then storage, then housing, then land; later steps never spend what an earlier one is saving for
     const a = S.auto || {}; let acted = false;
     if (a.idle && getIdle() > 0 && autoAssign()) acted = true;
     const now = Date.now();
     if (now - lastAuto < 3000) return acted;
     lastAuto = now;
-    if (a.feed && autoFeed()) acted = true;
-    else if (a.housing && autoHousing()) acted = true;
-    else if (a.claim && autoClaim()) acted = true;
+    const R = flows(1).R, reserve = {};
+    if (a.idle && autoTrim()) return true;
+    if (a.feed) {
+        if (autoFeed(R)) return true;
+        const f = foodPlan(R);
+        if (f) { if (afford1(f.cost, 1.1)) { if (autoDo(() => build(f.b.id))) return true; } else addReserve(reserve, f.cost, R); }
+    }
+    if (a.storage) {
+        const b = storagePlan(R);
+        if (b) {
+            const c = costOf(b);
+            if (!canPlace(b)) { if (a.claim && autoClaim(true, reserve)) return true; }       // no room for it: claim a tile first
+            else if (afford1(c, 1)) { if (autoDo(() => build(b.id))) return true; }
+            else addReserve(reserve, c, R);
+        }
+    }
+    if (a.housing && autoHousing(reserve)) return true;
+    if (a.claim && autoClaim(false, reserve)) return true;
     return acted;
 }
 
