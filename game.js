@@ -41,7 +41,7 @@ function newState(seed, prev) {
 }
 
 function ensure() { // fills in anything new in gamedata.json, and repairs NaN left by older versions
-    setWorld(S.seed); S.tech = S.tech || {}; S.auto = S.auto || {}; S.rules = S.rules || {};
+    setWorld(S.seed); S.tech = S.tech || {}; S.auto = S.auto || {}; S.rules = S.rules || {}; S.autoOrder = S.autoOrder || []; S.autoFocus = S.autoFocus || {};
     G.resources.forEach(r => { if (S.res[r.id] !== undefined && !Number.isFinite(S.res[r.id])) S.res[r.id] = r.initial || 0; });
     G.deposits.forEach(d => { const p = S.dep[d.id]; if (p && !(Number.isFinite(p.amt) && Number.isFinite(p.cap))) { const k = poolCap(S, d); S.dep[d.id] = { cap: k, amt: k }; } });
     G.resources.forEach(r => { if (S.res[r.id] === undefined) S.res[r.id] = r.initial || 0; });
@@ -430,9 +430,8 @@ function renderDisplayUI() {
         return mk("label", { className: "hint", style: "display:block;margin:4px 0;" }, mk("input", { type: "checkbox", checked: !!cur, onchange: e => { (SETTINGS.render.options[SETTINGS.render.renderer] = SETTINGS.render.options[SETTINGS.render.renderer] || {})[o.id] = e.target.checked; saveSettings(); drawMap(); } }), " " + o.label);
     });
     const height = mk("input", { type: "range", min: 30, max: 90, value: SETTINGS.layout.mapHeightVh, oninput: e => { SETTINGS.layout.mapHeightVh = +e.target.value; applyLayout(); drawMap(); }, onchange: saveSettings });
-    const autos = ((GP.newGame && GP.newGame.options) || []).filter(o => o.kind === "auto").map(o => mk("label", { className: "hint", style: "display:block;margin:4px 0;" },
-        mk("input", { type: "checkbox", checked: !!(S.auto || {})[o.auto], onchange: e => { S.auto = S.auto || {}; S.auto[o.auto] = e.target.checked; S.rev++; saveLocal(); } }), " " + o.label));
-    box.replaceChildren(row("Graphics", pick), ...opts, row("Map height", height), mk("h3", { textContent: "Automation (saved with this run)" }), ...autos);
+    box.replaceChildren(row("Graphics", pick), ...opts, row("Map height", height));
+    renderAutoUI();
 }
 
 function bindMap() { // drag to pan, wheel/pinch/buttons to zoom, tap to select
@@ -617,7 +616,16 @@ const sustain = d => { // workers a regrowing deposit can feed without being str
     return cap > 0 ? Math.max(1, Math.floor(d.regrow * cap / (2 * rate))) : 0;
 };
 function autoTrim() { // release a worker from an input-starved job or an over-staffed deposit so it can be reassigned elsewhere
+    for (const d of G.deposits) { // finite deposit used up: its workers produce nothing
+        if (d.regrow || S.dep[d.id].amt >= 1) continue;
+        const j = G.jobs.find(x => x.deposit === d.id && S.jobs[x.id] > 0);
+        if (j) { const n = Math.ceil(S.jobs[j.id] / 3); S.jobs[j.id] -= n; S.rev++; autoNote = true; log(`released ${n} ${j.name}${n > 1 ? "s" : ""}: ${d.name} is exhausted.`); autoNote = false; return true; }
+    }
     const R = flows(1).R;
+    for (const j of G.jobs) { // everything this job makes is full and in surplus: let some workers go so they can be reassigned
+        const ks = Object.keys(j.outputs);
+        if (S.jobs[j.id] > 1 && ks.every(k => S.res[k] >= capOf(k) * 0.98 && netOf(R, k) > 0.15 * R[k].c + 0.5)) { const n = Math.ceil(S.jobs[j.id] / 5); S.jobs[j.id] -= n; S.rev++; autoNote = true; log(`released ${n} ${j.name}${n > 1 ? "s" : ""}: ${ks.map(k => RES[k].name).join("/")} is full.`); autoNote = false; return true; }
+    }
     for (const j of G.jobs) {
         if (S.jobs[j.id] > 0 && Object.keys(j.inputs || {}).some(k => S.res[k] < 1 && netOf(R, k) <= 0)) { S.jobs[j.id]--; S.rev++; autoNote = true; log(`released a ${j.name}: out of ${Object.keys(j.inputs).map(k => RES[k].name).join("/")}.`); autoNote = false; return true; }
     }
@@ -644,7 +652,7 @@ function autoAssign() { // put idle settlers where something is actually needed:
                 let w;
                 if (G.pop.needs[k]) { const lvl = Math.min(1, S.res[k] / capOf(k)); w = ((1 - lvl) + (netOf(R, k) < 0 ? 0.5 : 0)) * 3; if (lvl >= 0.98) w = 0; }
                 else { const goal = (want[k] || 0) * 1.5; w = goal > 0 ? Math.max(0, (goal - S.res[k]) / goal) : 0.05; if (S.res[k] >= capOf(k) * 0.98) w = 0; }
-                score = Math.max(score, w * (1 + 0.5 * j.outputs[k] * yieldOf(j) * (j.deposit ? haul(j.deposit).eff : 1)));
+                score = Math.max(score, w * fmul(k) * (1 + 0.5 * j.outputs[k] * yieldOf(j) * (j.deposit ? haul(j.deposit).eff : 1)));
             });
             if (score > top) { top = score; best = j; }
         });
@@ -686,9 +694,11 @@ function foodPlan(R) { // food is draining and no job has a free slot: the cheap
     return null;
 }
 
+const claimOk = () => sum(claimCost()) <= sum(G.land.cost) * ((G.automation && G.automation.claimMaxMult) || 12); // automation stops buying land past this price
+const fmul = k => [0.25, 1, 3][(S.autoFocus || {})[k] ?? 1]; // player's resource focus: low / normal / high
 function wants() { // the biggest single purchase of each resource that is currently on offer
     const m = {}, add = c => { for (const k in c) m[k] = Math.max(m[k] || 0, c[k]); };
-    add(claimCost()); G.buildings.forEach(b => { if (S.unlocked["bld:" + b.id]) add(costOf(b)); });
+    if (claimOk()) add(claimCost()); G.buildings.forEach(b => { if (S.unlocked["bld:" + b.id]) add(costOf(b)); });
     G.techs.forEach(q => { if (S.unlocked["tech:" + q.id] && !S.tech[q.id]) add(q.cost); });
     const req = c => { if (!c) return; (c.all || c.any || []).forEach(req); if (c.resource !== undefined) m[c.resource] = Math.max(m[c.resource] || 0, c.gte); };
     G.buildings.forEach(b => { if (!S.unlocked["bld:" + b.id]) req(b.requires); }); // e.g. stone for a storehouse that is still locked
@@ -696,8 +706,8 @@ function wants() { // the biggest single purchase of each resource that is curre
 }
 function storageNeeds(R) { // stockpiles that are full and wasting while still small next to what is being bought, or too small for the next claim
     const w = wants(), need = new Set();
-    G.resources.forEach(r => { const k = r.id; if (S.unlocked["res:" + k] && w[k] && capOf(k) < 3 * w[k] && S.res[k] >= capOf(k) * 0.97 && netOf(R, k) > 0.01) need.add(k); });
-    if ((S.auto || {}).claim) { const cc = claimCost(); for (const k in cc) if (cc[k] > capOf(k)) need.add(k); }
+    G.resources.forEach(r => { const k = r.id; if (S.unlocked["res:" + k] && w[k] && capOf(k) < ((G.automation && G.automation.storageWantMult) || 3) * w[k] && S.res[k] >= capOf(k) * 0.97 && netOf(R, k) > 0.01) need.add(k); });
+    if ((S.auto || {}).claim && claimOk()) { const cc = claimCost(); for (const k in cc) if (cc[k] > capOf(k)) need.add(k); }
     return need;
 }
 function depotPlan() { // workers are hauling over long distances: a depot building that clearly improves it
@@ -741,11 +751,12 @@ function autoHousing(reserve) { // build the best affordable housing when the vi
 }
 function autoClaim(force, reserve) { // when building space runs out, or a wanted deposit is missing or thin, claim the most useful neighbouring tile
     reserve = reserve || {};
+    if (!force && !claimOk()) return false;
     const goal = new Set(), wnt = wants(); // terrains whose deposits we want more of
     G.deposits.forEach(d => {
         const e = S.dep[d.id], w = workersOn(d);
         const thin = d.regrow && e.cap > 0 && w >= 2 && (e.amt / e.cap < 0.5 || (w >= sustain(d) && S.res[d.resource] < 1.5 * (wnt[d.resource] || 0)));
-        const missing = e.cap === 0 && S.res[d.resource] < 1.5 * (wnt[d.resource] || 0) && G.jobs.some(j => j.deposit === d.id);
+        const missing = (e.cap === 0 || (!d.regrow && e.amt < 1)) && S.res[d.resource] < 1.5 * (wnt[d.resource] || 0) && G.jobs.some(j => j.deposit === d.id);
         if (thin || missing) dterr(d).forEach(t => goal.add(t));
     });
     if (!force && !goal.size && owned().filter(t => !t.b && !TD[terrainAt(t.x, t.y)].water).length >= 2) return false;
@@ -764,31 +775,80 @@ function autoClaim(force, reserve) { // when building space runs out, or a wante
     }));
     return best ? autoDo(() => claimAt(best[0], best[1])) : false;
 }
-function runAuto() { // priorities: food safety, then storage, then housing, then land; later steps never spend what an earlier one is saving for
+function autoResearch(R, reserve) { // research the affordable technology that unlocks the most, cheapest first
+    const refs = id => { // how many still-locked things are waiting on this tech
+        let n = 0; const has = c => !!c && (c.tech === id || (c.all || c.any || []).some(has));
+        [["bld:", G.buildings], ["job:", G.jobs], ["res:", G.resources], ["tech:", G.techs]].forEach(([p, list]) => list.forEach(x => { if (has(x.requires) && !(p === "tech:" ? S.tech[x.id] : S.unlocked[p + x.id])) n++; }));
+        return n;
+    };
+    let best = null, top = -1;
+    G.techs.filter(q => S.unlocked["tech:" + q.id] && !S.tech[q.id]).forEach(q => { const sc = (refs(q.id) * 3 + (q.effects || []).length) / (1 + sum(q.cost) / 200); if (sc > top) { top = sc; best = q; } });
+    if (!best) return false;
+    if (afford1(best.cost, 1.1) && keeps(best.cost, reserve)) { autoNote = true; research(best.id); autoNote = false; return !!S.tech[best.id]; }
+    addReserve(reserve, best.cost, R); return false;
+}
+function producePlan(R) { // build what a wanted resource, or a locked technology, is waiting on
+    const w = wants(), keys = Object.keys(w).sort((a, b) => ((S.autoFocus || {})[b] ?? 1) - ((S.autoFocus || {})[a] ?? 1));
+    const plan = (k, depth) => { // a building that lets some job make k, or make an input of that job
+        if (depth > 4) return null;
+        for (const j of G.jobs.filter(x => x.outputs[k])) {
+            const bid = j.slots ? j.slots.building : (j.requires && j.requires.building) || null;
+            if (bid && S.bld[bid] === 0) { if (S.unlocked["bld:" + bid] && canPlace(bOf(bid))) return bOf(bid); continue; }
+            for (const ki of Object.keys(j.inputs || {})) if (S.res[ki] < 5 && R[ki].p <= 0.01) { const r = plan(ki, depth + 1); if (r) return r; }
+        }
+        return null;
+    };
+    for (const k of keys) { if (!R[k] || S.res[k] >= w[k] || R[k].p > 0.01) continue; const b = plan(k, 0); if (b) return { b }; }
+    // technologies still locked behind a building count (e.g. a second farm)
+    const terms = c => !c ? [] : c.all || c.any ? (c.all || c.any).flatMap(terms) : c.building !== undefined && S.bld[c.building] < c.gte ? [c.building] : [];
+    for (const q of G.techs) { if (S.unlocked["tech:" + q.id]) continue; for (const bid of terms(q.requires)) if (S.unlocked["bld:" + bid] && canPlace(bOf(bid))) return { b: bOf(bid) }; }
+    return null;
+}
+function buyBuilding(b, reserve, R) { // build it if affordable, otherwise earmark its cost so lower priorities do not spend it
+    const c = costOf(b);
+    if (afford1(c, 1.1) && keeps(c, reserve)) return autoDo(() => build(b.id));
+    addReserve(reserve, c, R); return false;
+}
+const AUTO_KEYS = { food: "feed", storage: "storage", research: "research", production: "production", housing: "housing", land: "claim" };
+const AUTO_STEPS = {
+    food: (R, rs) => { if (autoFeed(R)) return true; const f = foodPlan(R); return f ? buyBuilding(f.b, rs, R) : false; },
+    storage: (R, rs, a) => { const b = storagePlan(R); if (!b) return false; return canPlace(b) ? buyBuilding(b, rs, R) : !!a.claim && autoClaim(true, rs); },
+    research: (R, rs) => autoResearch(R, rs),
+    production: (R, rs) => { const p = producePlan(R); return p ? buyBuilding(p.b, rs, R) : false; },
+    housing: (R, rs) => autoHousing(rs),
+    land: (R, rs) => autoClaim(false, rs)
+};
+function autoOrder() { // the player's order first, then any categories they have not placed
+    const mine = (S.autoOrder || []).filter(k => AUTO_KEYS[k]), def = (G.automation && G.automation.order) || Object.keys(AUTO_KEYS);
+    return [...mine, ...def.filter(k => !mine.includes(k))];
+}
+function runAuto() { // live ticks only. Assignment every tick; purchases at most one every 3 s, in priority order, each keeping what higher ones are saving for
     const a = S.auto || {}; let acted = false;
     if (a.idle && getIdle() > 0 && autoAssign()) acted = true;
     const now = Date.now();
     if (now - lastAuto < 3000) return acted;
     lastAuto = now;
-    const R = flows(1).R, reserve = {};
     if (a.idle && autoTrim()) return true;
-    if (a.feed) {
-        if (autoFeed(R)) return true;
-        const f = foodPlan(R);
-        if (f) { if (afford1(f.cost, 1.1)) { if (autoDo(() => build(f.b.id))) return true; } else addReserve(reserve, f.cost, R); }
-    }
-    if (a.storage) {
-        const b = storagePlan(R);
-        if (b) {
-            const c = costOf(b);
-            if (!canPlace(b)) { if (a.claim && autoClaim(true, reserve)) return true; }       // no room for it: claim a tile first
-            else if (afford1(c, 1)) { if (autoDo(() => build(b.id))) return true; }
-            else addReserve(reserve, c, R);
-        }
-    }
-    if (a.housing && autoHousing(reserve)) return true;
-    if (a.claim && autoClaim(false, reserve)) return true;
+    const R = flows(1).R, reserve = {};
+    for (const cat of autoOrder()) { if (a[AUTO_KEYS[cat]] && AUTO_STEPS[cat](R, reserve, a)) return true; }
     return acted;
+}
+
+function renderAutoUI() { // the Automation panel: idle assignment, purchase priorities and resource focus
+    const box = $("auto-body"); if (!box || !S) return;
+    const opts = {}; ((GP.newGame && GP.newGame.options) || []).filter(o => o.kind === "auto").forEach(o => opts[o.auto] = o);
+    const set = (k, v) => { S.auto = S.auto || {}; S.auto[k] = v; S.rev++; saveLocal(); };
+    const cb = key => mk("label", { className: "hint", style: "display:flex;gap:8px;align-items:center;margin:4px 0;" }, mk("input", { type: "checkbox", checked: !!(S.auto || {})[key], onchange: e => set(key, e.target.checked) }), (opts[key] || { label: key }).label);
+    const order = autoOrder(), move = (i, d) => { const o = order.slice(); [o[i], o[i + d]] = [o[i + d], o[i]]; S.autoOrder = o; S.rev++; saveLocal(); renderAutoUI(); };
+    const rows = order.map((cat, i) => mk("div", { className: "ng-row" }, cb(AUTO_KEYS[cat]), mk("span", {}, mk("button", { textContent: "▲", disabled: i === 0, onclick: () => move(i, -1) }), " ", mk("button", { textContent: "▼", disabled: i === order.length - 1, onclick: () => move(i, 1) }))));
+    const focus = G.resources.filter(r => S.unlocked["res:" + r.id]).map(r => {
+        const sel = mk("select", { onchange: e => { S.autoFocus = S.autoFocus || {}; S.autoFocus[r.id] = +e.target.value; S.rev++; saveLocal(); } }, ...["Low", "Normal", "High"].map((n, v) => mk("option", { value: String(v), textContent: n })));
+        sel.value = String((S.autoFocus || {})[r.id] ?? 1);
+        return mk("div", { className: "ng-row" }, mk("span", { textContent: `${r.icon || ""} ${r.name}` }), sel);
+    });
+    box.replaceChildren(cb("idle"), mk("h3", { textContent: "Purchase priorities (top is first)" }), ...rows,
+        mk("p", { className: "hint", textContent: "A purchase being saved up for is not spent on anything below it." }),
+        mk("h3", { textContent: "Resource focus (which jobs idle settlers prefer)" }), ...focus);
 }
 
 // --- PERSISTENCE & SECRET GIST SYNC ---
@@ -854,6 +914,7 @@ async function pull() {
 function bindEvents() {
     $("toggle-sync-btn").onclick = () => $("sync-panel").classList.toggle("hidden");
     $("toggle-display-btn").onclick = () => $("display-panel").classList.toggle("hidden");
+    $("toggle-auto-btn").onclick = () => { $("auto-panel").classList.toggle("hidden"); renderAutoUI(); };
     $("gist-token").oninput = $("gist-id").oninput = saveCreds;
     $("push-gist-btn").onclick = () => push(false);
     $("pull-gist-btn").onclick = pull;

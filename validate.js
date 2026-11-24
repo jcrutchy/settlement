@@ -142,6 +142,11 @@
             }
             if (!buildings.some(b => (b.effects || []).some(e => e.type === "depot"))) warn("map", "no building has a depot effect, so hauling distance can never be reduced");
         }
+        if (G.automation !== undefined) {
+            const A = G.automation, cats = ["food", "storage", "research", "production", "housing", "land"];
+            if (!Array.isArray(A.order) || A.order.some(c => !cats.includes(c))) err("automation", `order must list categories from: ${cats.join(", ")}`);
+            ["claimMaxMult", "storageWantMult"].forEach(k => { if (!isNum(A[k], 1)) err("automation", `${k} must be a number >= 1`); });
+        }
         // new-game options: every rule path must point at a real number in this file
         if (G.newGame !== undefined) {
             const getP = (o, p) => { let cur = o; for (const s of p.split(".")) { cur = Array.isArray(cur) ? cur.find(x => x.id === s) : cur && cur[s]; if (cur === undefined || cur === null) return undefined; } return cur; };

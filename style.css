@@ -197,4 +197,4 @@ footer { display: flex; justify-content: space-between; margin-top: 20px; }
 .ng-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 6px 0; font-size: 0.85rem; }
 .ng-row input[type=number] { width: 6.5em; } .ng-row input[type=text] { width: 9em; }
 #newgame-panel h3 { margin-top: 12px; }
-#newgame-panel input[type=number], #newgame-panel input[type=text], #newgame-panel select, #display-panel select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font: 0.85rem var(--font-mono); max-width: 100%; }
+#auto-panel select, #auto-panel button, #newgame-panel input[type=number], #newgame-panel input[type=text], #newgame-panel select, #display-panel select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font: 0.85rem var(--font-mono); max-width: 100%; }
