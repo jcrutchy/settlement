@@ -101,6 +101,22 @@
         if (G.upkeep !== undefined) ["decay", "repair"].forEach(k => { if (!isNum(G.upkeep[k], 1e-12)) err("upkeep", `${k} must be a positive number`); });
         if (G.upkeep !== undefined && !(isNum(G.upkeep.floor) && G.upkeep.floor <= 1)) err("upkeep", "floor must be a number from 0 to 1");
 
+        // gauges: slow values fed by village signals, with growth/output effects at the low and high ends
+        const gauges = G.gauges !== undefined ? (Array.isArray(G.gauges) ? G.gauges : (err("gauges", "must be an array"), [])) : [], gaugeIds = new Set(), SIGNALS = ["food", "housing", "tiers", "wear"];
+        gauges.forEach((g, i) => {
+            const w = `gauge "${g.id || i}"`;
+            if (!g.id || gaugeIds.has(g.id)) err(w, "missing or duplicate id"); else gaugeIds.add(g.id);
+            if (!g.name) warn(w, "missing name");
+            if (!(isNum(g.start, 0) && g.start <= 1)) err(w, "start must be a number from 0 to 1");
+            if (typeof g.base !== "number" || !isFinite(g.base)) err(w, "base must be a number");
+            if (!isNum(g.speed, 1e-9)) err(w, "speed must be a positive number (change per second)");
+            Object.keys(g.terms || {}).forEach(k => { if (!SIGNALS.includes(k)) err(w, `terms key "${k}" is not a signal (${SIGNALS.join(", ")})`); else if (typeof g.terms[k] !== "number" || !isFinite(g.terms[k])) err(w, `terms.${k} must be a number`); });
+            if (!g.low) err(w, "low is required: { at, growth, output }");
+            ["low", "high"].forEach(f => { const o = g[f]; if (!o) return; if (!(typeof o.at === "number" && o.at > 0 && o.at < 1)) err(w, `${f}.at must be between 0 and 1`); Object.keys(o).forEach(k => { if (k !== "at" && k !== "growth" && k !== "output") err(w, `${f} key "${k}" is not supported (at, growth, output)`); else if (typeof o[k] !== "number" || !isFinite(o[k])) err(w, `${f}.${k} must be a number`); }); });
+            if (g.warn !== undefined && !(typeof g.warn === "number" && g.warn > 0 && g.warn < 1)) err(w, "warn must be between 0 and 1");
+            if (!buildings.some(b => (b.effects || []).some(e => e.type === "gauge" && e.resource === g.id))) warn(w, "no building raises this gauge, so automation cannot help it");
+        });
+
         // buildings
         const capGivers = {}; // resource -> [building ids]; "*" = all
         buildings.forEach(b => {
@@ -116,11 +132,12 @@
             b.effects.forEach(e => {
                 if (!isNum(e.value, 1e-12)) err(w, "effect value must be a positive number");
                 if (e.type === "housing" || e.type === "depot") return;
+                if (e.type === "gauge") { if (!gaugeIds.has(e.resource)) err(w, `gauge effect references unknown gauge "${e.resource}"`); return; }
                 if (e.type === "capacity" || e.type === "outputMult" || e.type === "preserve") {
                     if (e.type === "capacity" && e.resource === "*") { (capGivers["*"] = capGivers["*"] || []).push(b.id); return; }
                     if (!hasRes(e.resource)) err(w, `${e.type} effect references unknown resource "${e.resource}"`);
                     else if (e.type === "capacity") (capGivers[e.resource] = capGivers[e.resource] || []).push(b.id);
-                } else err(w, `unknown effect type "${e.type}" (housing, capacity, outputMult, preserve, depot)`);
+                } else err(w, `unknown effect type "${e.type}" (housing, capacity, outputMult, preserve, depot, gauge)`);
             });
         });
 
@@ -132,6 +149,7 @@
             q.effects.forEach(e => {
                 if (!isNum(e.value, 1e-12)) err(w, "effect value must be a positive number");
                 if (e.type === "housing") return;
+                if (e.type === "gauge") { if (!gaugeIds.has(e.resource)) err(w, `gauge effect references unknown gauge "${e.resource}"`); return; }
                 if (!["capacity", "outputMult", "preserve"].includes(e.type)) return err(w, `effect type "${e.type}" is not supported on techs (housing, capacity, outputMult, preserve)`);
                 if (!(e.type === "capacity" && e.resource === "*") && !hasRes(e.resource)) err(w, `${e.type} effect references unknown resource "${e.resource}"`);
             });
@@ -162,7 +180,7 @@
             if (!buildings.some(b => (b.effects || []).some(e => e.type === "depot"))) warn("map", "no building has a depot effect, so hauling distance can never be reduced");
         }
         if (G.automation !== undefined) {
-            const A = G.automation, cats = ["food", "storage", "research", "production", "housing", "land"];
+            const A = G.automation, cats = ["food", "storage", "research", "production", "housing", "welfare", "land"];
             if (!Array.isArray(A.order) || A.order.some(c => !cats.includes(c))) err("automation", `order must list categories from: ${cats.join(", ")}`);
             ["claimMaxMult", "storageWantMult"].forEach(k => { if (!isNum(A[k], 1)) err("automation", `${k} must be a number >= 1`); });
         }

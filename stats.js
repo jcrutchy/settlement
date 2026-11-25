@@ -45,6 +45,7 @@ function draw(cv, o, cur) {
     let lo = Math.min(...vals, o.zero ? 0 : Infinity), hi = Math.max(...vals, o.zero ? 0 : -Infinity);
     if (hi - lo < 1e-9) hi = lo + 1;
     const pad = (hi - lo) * 0.06; hi += pad; if (lo < 0 || !o.zero) lo = o.nonneg ? Math.max(0, lo - pad) : lo - pad;
+    if (o.fixed) { lo = o.fixed[0]; hi = o.fixed[1]; }
     const t0 = o.t[0], t1 = o.t[n - 1], X = t => PL + (t - t0) / (t1 - t0 || 1) * pw, Y = v => PT + (hi - v) / (hi - lo) * ph;
     c.font = "10px ui-monospace, monospace"; c.lineWidth = 1;
     [hi, (hi + lo) / 2, lo].forEach(v => {
@@ -105,6 +106,12 @@ function render() {
         else if (mode === "net") cards.push(card(title, { t: v.t, lines: [{ v: N, color: "#34d399", fill: true }], zero: true }, i => `net ${N[i] > 0 ? "+" : ""}${fmt(N[i])}/s`));
         else cards.push(card(title, { t: v.t, lines: [{ v: P, color: "#34d399" }, { v: C, color: "#f87171" }], zero: true, nonneg: true }, i => `+${fmt(P[i])}/s produced · -${fmt(C[i])}/s used`));
     });
+    const gs = (G.gauges || []).filter(g => v.has("gauge:" + g.id));
+    if (gs.length) {
+        const gp = ["#fbbf24", "#f87171", "#60a5fa", "#34d399"];
+        cards.push(card("😊 Gauges", { t: v.t, lines: gs.map((g, k) => ({ v: v.col("gauge:" + g.id), color: gp[k % gp.length] })), fixed: [0, 1] },
+            i => gs.map(g => `${g.name} ${Math.round(v.col("gauge:" + g.id)[i] * 100)}%`).join(" · ")));
+    }
     const deps = G.deposits.filter(d => v.has("dep:" + d.id));
     if (deps.length) {
         const pal = ["#34d399", "#60a5fa", "#f59e0b", "#f87171", "#a78bfa"];
