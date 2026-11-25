@@ -9,6 +9,7 @@ const randSeed = () => (Math.random() * 2147483647) >>> 0;
 const toSeed = t => /^\d+$/.test(t) ? (+t) >>> 0 : [...t].reduce((a, ch) => Math.imul(a ^ ch.charCodeAt(0), 16777619) >>> 0, 2166136261);
 const fmt = n => n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : String(Math.floor(n));
 const costStr = c => Object.entries(c).map(([k, v]) => `${v} ${k}`).join(", ");
+const upStr = o => Object.entries(o || {}).map(([k, v]) => `${+(v * 3600).toFixed(1)}/hr ${k}`).join(" + "); // upkeep is tiny per second, so show it per hour
 const ioStr = o => Object.entries(o || {}).map(([k, v]) => `${v}/s ${k}`).join(" + ");
 const dur = t => t >= 3600 ? (t / 3600).toFixed(1) + "h" : t >= 60 ? Math.round(t / 60) + "m" : Math.round(t) + "s";
 const jobText = j => (j.inputs ? ioStr(j.inputs) + " → " : "") + ioStr(j.outputs)
@@ -34,14 +35,14 @@ function newState(seed, prev) {
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) own[K(c.x + dx, c.y + dy)] = { x: c.x + dx, y: c.y + dy, b: null };
     own[K(c.x, c.y)].b = "center";
     const s = { version: 4, seed, rev: prev ? prev.rev + 1 : 0, cloudRev: prev ? prev.cloudRev : 0, lastTick: Date.now(),
-        res: {}, unlocked: {}, tech: {}, pop: 0, growth: 0, starve: 0, jobs: {}, bld: {}, claims: 0, center: c, own, dep: {},
+        res: {}, unlocked: {}, tech: {}, pop: 0, growth: 0, starve: 0, jobs: {}, bld: {}, claims: 0, cond: {}, center: c, own, dep: {},
         logs: [`You arrive at a quiet clearing (seed ${seed}). Gather wood to build shelter.`] };
     G.deposits.forEach(d => { const k = poolCap(s, d); s.dep[d.id] = { cap: k, amt: k }; });
     return s;
 }
 
 function ensure() { // fills in anything new in gamedata.json, and repairs NaN left by older versions
-    setWorld(S.seed); S.tech = S.tech || {}; S.auto = S.auto || {}; S.rules = S.rules || {}; S.autoOrder = S.autoOrder || []; S.autoFocus = S.autoFocus || {};
+    setWorld(S.seed); S.tech = S.tech || {}; S.auto = S.auto || {}; S.rules = S.rules || {}; S.autoOrder = S.autoOrder || []; S.autoFocus = S.autoFocus || {}; S.cond = S.cond || {};
     G.resources.forEach(r => { if (S.res[r.id] !== undefined && !Number.isFinite(S.res[r.id])) S.res[r.id] = r.initial || 0; });
     G.deposits.forEach(d => { const p = S.dep[d.id]; if (p && !(Number.isFinite(p.amt) && Number.isFinite(p.cap))) { const k = poolCap(S, d); S.dep[d.id] = { cap: k, amt: k }; } });
     G.resources.forEach(r => { if (S.res[r.id] === undefined) S.res[r.id] = r.initial || 0; });
@@ -65,7 +66,7 @@ function met(c) {
 
 function checkUnlocks(silent) {
     let changed = false;
-    [["res", G.resources, "Discovered resource"], ["job", G.jobs, "New role available"], ["bld", G.buildings, "New structure unlocked"], ["tech", G.techs, "Technology available"]].forEach(([k, list, msg]) => {
+    [["res", G.resources, "Discovered resource"], ["job", G.jobs, "New role available"], ["bld", G.buildings, "New structure unlocked"], ["tech", G.techs, "Technology available"], ["tier", G.pop.tiers || [], "New need"]].forEach(([k, list, msg]) => {
         list.forEach(x => {
             const key = k + ":" + x.id;
             if (!S.unlocked[key] && met(x.requires)) { S.unlocked[key] = true; changed = true; if (!silent) log(`${msg}: ${x.name}.`); }
@@ -74,10 +75,15 @@ function checkUnlocks(silent) {
     return changed;
 }
 
+function strength(id) { // 1 when maintained, falling to upkeep.floor as a building decays; housing is exempt (see eff)
+    const c = S.cond[id], f = G.upkeep ? G.upkeep.floor : 0.5;
+    return c === undefined ? 1 : 1 - (1 - f) * (1 - c);
+}
+
 function eff(type, key) { // sum of an effect type across everything built and every researched tech
     let t = 0;
     const add = (list, n) => list.forEach(e => { if (e.type === type && (key === undefined || e.resource === key || (type === "capacity" && e.resource === "*"))) t += e.value * n; });
-    G.buildings.forEach(b => { if (S.bld[b.id]) add(b.effects, S.bld[b.id]); });
+    G.buildings.forEach(b => { if (S.bld[b.id]) add(b.effects, S.bld[b.id] * (type === "housing" ? 1 : strength(b.id))); });
     G.techs.forEach(q => { if (S.tech[q.id]) add(q.effects || [], 1); });
     return t;
 }
@@ -175,25 +181,44 @@ const clampZoom = z => Math.max(8, Math.min(64, z));
 
 // --- SIMULATION ---
 function flows(dt) { // production/consumption per second for the next dt seconds
-    const R = {}, harvest = {};
+    const R = {}, harvest = {}, paid = {}, T = {};
+    let gMult = 0, oMult = 0, satSum = 0, satN = 0;
     G.resources.forEach(r => R[r.id] = { p: 0, c: 0 });
     for (const k in G.pop.needs) R[k].c += S.pop * G.pop.needs[k];
+    (G.pop.tiers || []).forEach(t => { // wants beyond bare survival: an unlocked tier eats goods and pays out in proportion to how well they are supplied
+        if (!S.unlocked["tier:" + t.id]) return;
+        let e = 1;
+        for (const k in t.needs) { const need = S.pop * t.needs[k] * dt; if (need > 0) e = Math.min(e, S.res[k] / need); }
+        e = Math.max(0, Math.min(1, e)); T[t.id] = e; satSum += e; satN++;
+        for (const k in t.needs) R[k].c += S.pop * t.needs[k] * e;
+        const fx = t.effects || {}, lack = t.lack || {};
+        gMult += (fx.growth || 0) * e + (lack.growth || 0) * (1 - e);
+        oMult += (fx.output || 0) * e + (lack.output || 0) * (1 - e);
+    });
+    const om = Math.max(0.2, 1 + oMult);
     G.resources.forEach(r => { if (r.spoil) R[r.id].c += S.res[r.id] * r.spoil / (1 + eff("preserve", r.id)); }); // stock rots; preserve effects slow it
+    G.buildings.forEach(b => { // upkeep: unpaid maintenance wears the building down (see step)
+        const cnt = S.bld[b.id]; if (!cnt || !b.upkeep) return;
+        let e = 1;
+        for (const k in b.upkeep) { const need = cnt * b.upkeep[k] * dt; if (need > 0) e = Math.min(e, S.res[k] / need); }
+        e = Math.min(1, e); paid[b.id] = e;
+        for (const k in b.upkeep) R[k].c += cnt * b.upkeep[k] * e;
+    });
     G.jobs.forEach(j => {
         const n = S.jobs[j.id]; if (!n) return;
         let e = 1; // efficiency: limited by input stock
         for (const k in j.inputs || {}) { const need = n * j.inputs[k] * dt; if (need > 0) e = Math.min(e, S.res[k] / need); }
         e = Math.min(1, e);
-        const d = j.deposit && S.dep[j.deposit];
+        const d = j.deposit && S.dep[j.deposit], wear = j.slots ? strength(j.slots.building) : 1;
         for (const k in j.outputs) {
-            let o = n * j.outputs[k] * e * (1 + eff("outputMult", k));
+            let o = n * j.outputs[k] * e * (1 + eff("outputMult", k)) * om * wear;
             let kept = 1;
             if (d) { const dens = DEP[j.deposit].regrow ? (d.cap > 0 ? d.amt / d.cap : 0) : (d.amt > 0 ? 1 : 0); o = d.cap > 0 ? Math.min(o * dens, d.amt / dt) : 0; harvest[j.deposit] = (harvest[j.deposit] || 0) + o; kept = haul(j.deposit).eff; }
             R[k].p += o * kept;
         }
         for (const k in j.inputs || {}) R[k].c += n * j.inputs[k] * e;
     });
-    return { R, harvest };
+    return { R, harvest, paid, T, gMult, oMult, mood: satN ? satSum / satN : 1 };
 }
 
 function trimJobs() {
@@ -205,8 +230,17 @@ function trimJobs() {
 }
 
 function step(dt) {
-    const { R, harvest } = flows(dt);
+    const { R, harvest, paid, gMult } = flows(dt);
     G.resources.forEach(r => { const x = R[r.id]; S.res[r.id] = Math.max(0, Math.min(S.res[r.id] + (x.p - x.c) * dt, capOf(r.id))); });
+    const U = G.upkeep || { decay: 0.002, repair: 0.01 };
+    G.buildings.forEach(b => { // unpaid upkeep wears a building type down; paid upkeep repairs it
+        if (!b.upkeep) return;
+        if (!S.bld[b.id]) { delete S.cond[b.id]; return; }
+        const c = S.cond[b.id] === undefined ? 1 : S.cond[b.id], e = paid[b.id] === undefined ? 1 : paid[b.id];
+        const n = Math.max(0, Math.min(1, e < 0.999 ? c - U.decay * (1 - e) * dt : c + U.repair * dt));
+        if (c >= 0.7 && n < 0.7) log(`${b.name} is falling into disrepair: it needs ${Object.keys(b.upkeep).map(k => RES[k].name.toLowerCase()).join(" / ")}.`, true);
+        S.cond[b.id] = n;
+    });
     G.deposits.forEach(d => { // logistic regrowth; tiny floor so a depleted deposit can recover
         const s = S.dep[d.id], seed = Math.max(s.amt, 0.02 * s.cap);
         s.amt = Math.max(0, Math.min(s.cap, s.amt - (harvest[d.id] || 0) * dt + (s.cap > 0 ? d.regrow * seed * (1 - s.amt / s.cap) * dt : 0)));
@@ -221,7 +255,7 @@ function step(dt) {
     } else {
         S.starve = 0;
         if (S.pop < housing() && S.res.food >= G.pop.growthFoodMin) {
-            S.growth += G.pop.growthRate * dt;
+            S.growth += G.pop.growthRate * dt * Math.max(0, 1 + gMult);
             if (S.growth >= 1) { S.growth -= 1; S.pop++; log("A new settler arrived at your camp.", true); }
         }
     }
@@ -340,6 +374,7 @@ function renderAll() {
     const badge = "font-size:0.65rem;padding:1px 4px;";
     $("resources-list").innerHTML = rs.map(r => `<div class="stat-card"><div class="stat-card-content"><span>${r.icon} ${r.name}</span><strong id="res-val-${r.id}">0</strong><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;"><span class="rate-badge positive" style="${badge}" id="res-prod-${r.id}"></span><span class="rate-badge negative" style="${badge}" id="res-cons-${r.id}"></span><span class="rate-badge neutral" style="${badge}" id="res-net-${r.id}"></span></div></div></div>`).join("");
     $("manual-actions").innerHTML = rs.filter(r => r.manual).map(r => `<button onclick="gather('${r.id}')">+ Gather ${r.name}</button>`).join("");
+    $("tiers-list").innerHTML = (G.pop.tiers || []).filter(t => S.unlocked["tier:" + t.id]).map(t => `<div class="row-item"><div class="row-info"><strong>${esc(((t.icon || "") + " " + t.name).trim())}</strong><span id="tier-info-${t.id}"></span></div><span class="badge" id="tier-val-${t.id}">0%</span></div>`).join("");
     $("deposits-list").innerHTML = G.deposits.map(d => `<div class="row-item"><div class="row-info"><strong>${d.name}</strong><span id="dep-${d.id}"></span></div></div>`).join("");
     $("jobs-list").innerHTML = G.jobs.filter(j => S.unlocked["job:" + j.id]).map(j => `<div class="row-item"><div class="row-info"><strong>${j.name}</strong><span id="job-info-${j.id}"></span></div><div class="button-row" style="align-items:center;"><button onclick="adjustJob('${j.id}',-1)">-</button><span class="badge" id="job-val-${j.id}">0</span><button id="job-add-${j.id}" onclick="adjustJob('${j.id}',1)">+</button></div></div>`).join("");
     $("buildings-list").innerHTML = G.buildings.filter(b => S.unlocked["bld:" + b.id]).map(b => `<div class="row-item"><div class="row-info"><strong id="bld-name-${b.id}"></strong><span id="bld-desc-${b.id}"></span></div><button id="bld-btn-${b.id}" onclick="build('${b.id}')">Build</button></div>`).join("");
@@ -485,8 +520,13 @@ function renderGoals() { // the locked things closest to unlocking
     }) : [Object.assign(document.createElement("span"), { className: "hint", textContent: "Everything is unlocked." })]));
 }
 
+const tierFx = t => { // short text for the Population panel: what a tier pays out when supplied, and costs when short
+    const pc = v => (v > 0 ? "+" : "") + Math.round(v * 100) + "%", bit = o => [o.growth ? `${pc(o.growth)} arrivals` : "", o.output ? `${pc(o.output)} output` : ""].filter(Boolean).join(", ");
+    return [bit(t.effects || {}) && `supplied: ${bit(t.effects)}`, bit(t.lack || {}) && `short: ${bit(t.lack)}`].filter(Boolean).join(" · ") || "no effect";
+};
+
 function renderDynamic() {
-    const { R, harvest } = flows(1), set = (id, t) => { const e = $(id); if (e) e.textContent = t; };
+    const { R, harvest, T, mood } = flows(1), set = (id, t) => { const e = $(id); if (e) e.textContent = t; };
     G.resources.forEach(r => {
         const x = R[r.id], net = x.p - x.c;
         set("res-val-" + r.id, fmt(S.res[r.id]) + " / " + fmt(capOf(r.id)));
@@ -510,11 +550,12 @@ function renderDynamic() {
     set("pop-counter", `${S.pop} / ${housing()}`);
     set("idle-pop", getIdle());
     set("needs-hint", `(each villager consumes ${ioStr(G.pop.needs)})`);
+    (G.pop.tiers || []).forEach(t => { if (T[t.id] === undefined) return; set("tier-val-" + t.id, Math.round(T[t.id] * 100) + "%"); set("tier-info-" + t.id, `each villager uses ${ioStr(t.needs)} · ${tierFx(t)}`); });
     G.jobs.forEach(j => { set("job-val-" + j.id, j.slots ? `${S.jobs[j.id]}/${slotCap(j)}` : S.jobs[j.id]); set("job-info-" + j.id, jobText(j)); const a = $("job-add-" + j.id); if (a) a.disabled = getIdle() < 1 || S.jobs[j.id] >= slotCap(j); });
     G.buildings.forEach(b => {
         const c = costOf(b);
         set("bld-name-" + b.id, `${b.name} (${S.bld[b.id]})`);
-        set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)}${b.terrain ? " • On: " + b.terrain.join("/") : ""}${b.near ? " • Next to: " + b.near.join("/") : ""}${canPlace(b) ? "" : " • no free tile suits it: claim more land"}`);
+        set("bld-desc-" + b.id, `${b.desc} • Cost: ${costStr(c)}${b.upkeep ? " • Upkeep: " + upStr(b.upkeep) + (S.bld[b.id] && S.cond[b.id] !== undefined && S.cond[b.id] < 0.995 ? " • Condition " + Math.round(S.cond[b.id] * 100) + "%" : "") : ""}${b.terrain ? " • On: " + b.terrain.join("/") : ""}${b.near ? " • Next to: " + b.near.join("/") : ""}${canPlace(b) ? "" : " • no free tile suits it: claim more land"}`);
         const btn = $("bld-btn-" + b.id); if (btn) btn.disabled = !(afford(c) && canPlace(b));
     });
 }

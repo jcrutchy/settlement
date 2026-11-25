@@ -83,11 +83,30 @@
             walk(j.requires, w);
         });
 
+        // population tiers: goods beyond bare survival
+        const tiers = G.pop && G.pop.tiers !== undefined ? (Array.isArray(G.pop.tiers) ? G.pop.tiers : (err("pop", "tiers must be an array"), [])) : [];
+        const tierIds = new Set();
+        tiers.forEach((t, i) => {
+            const w = `tier "${t.id || i}"`;
+            if (!t.id || tierIds.has(t.id)) err(w, "missing or duplicate id"); else tierIds.add(t.id);
+            if (!t.name) warn(w, "missing name");
+            walk(t.requires, w);
+            if (!t.needs || !Object.keys(t.needs).length) err(w, "needs must name at least one resource"); else checkMap(t.needs, w, "needs");
+            ["effects", "lack"].forEach(f => Object.keys(t[f] || {}).forEach(k => {
+                if (k !== "growth" && k !== "output") err(w, `${f} key \"${k}\" is not supported (growth, output)`);
+                else if (typeof t[f][k] !== "number" || !isFinite(t[f][k])) err(w, `${f}.${k} must be a number`);
+            }));
+            if (!Object.keys(t.effects || {}).length && !Object.keys(t.lack || {}).length) warn(w, "has no effects or penalties, so it only consumes goods");
+        });
+        if (G.upkeep !== undefined) ["decay", "repair"].forEach(k => { if (!isNum(G.upkeep[k], 1e-12)) err("upkeep", `${k} must be a positive number`); });
+        if (G.upkeep !== undefined && !(isNum(G.upkeep.floor) && G.upkeep.floor <= 1)) err("upkeep", "floor must be a number from 0 to 1");
+
         // buildings
         const capGivers = {}; // resource -> [building ids]; "*" = all
         buildings.forEach(b => {
             const w = `building "${b.id}"`;
             checkMap(b.cost, w, "cost");
+            if (b.upkeep !== undefined) checkMap(b.upkeep, w, "upkeep");
             if (!b.icon) warn(w, "missing icon (shown on the map)");
             if (!isNum(b.uses, 1)) err(w, "uses (plots) must be a number >= 1");
             checkGrowth(b.growth, w);
@@ -185,6 +204,8 @@
         const used = new Set(Object.keys((G.pop && G.pop.needs) || {}).concat(Object.keys((L && L.cost) || {})));
         jobs.forEach(j => Object.keys(j.inputs || {}).forEach(k => used.add(k)));
         buildings.forEach(b => Object.keys(b.cost || {}).forEach(k => used.add(k)));
+        buildings.forEach(b => Object.keys(b.upkeep || {}).forEach(k => used.add(k)));
+        tiers.forEach(t => Object.keys(t.needs || {}).forEach(k => used.add(k)));
         techs.forEach(q => Object.keys(q.cost || {}).forEach(k => used.add(k)));
         techs.forEach(q => { if (!(q.effects || []).length && !refT.has(q.id)) warn(`tech "${q.id}"`, "does nothing: no effects and nothing requires it"); });
         resources.forEach(r => { if (!used.has(r.id)) warn(`resource "${r.id}"`, "dead end: nothing consumes it (no job input, building cost, land cost or population need)"); });
