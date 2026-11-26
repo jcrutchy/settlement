@@ -36,10 +36,15 @@ function build() {
             if (x.slots) edge("B:" + x.slots.building, n.key, "unlock");
         }
     });
-    const cap = Object.keys(N).length; // depth = longest path; capped so cycles can't loop forever
-    for (let i = 0, ch = true; ch && i < cap; i++) {
+    // depth = longest path. Loops are normal here (food pays for the hunting tech that unlocks hunters that make food), so find them with a
+    // depth-first walk from the deposits and ignore only the back edges when layering; they are still drawn.
+    const out = {}, state = {}, back = new Set();
+    E.forEach(e => (out[e.a] = out[e.a] || []).push(e));
+    const walk = k => { state[k] = 1; (out[k] || []).forEach(e => { if (state[e.b] === 1) back.add(e); else if (!state[e.b]) walk(e.b); }); state[k] = 2; };
+    Object.keys(KIND).forEach(kind => Object.values(N).forEach(n => { if (n.kind === kind && !state[n.key]) walk(n.key); }));
+    for (let i = 0, ch = true; ch && i <= Object.keys(N).length; i++) {
         ch = false;
-        E.forEach(e => { const d = Math.min(N[e.a].depth + 1, cap); if (d > N[e.b].depth) { N[e.b].depth = d; ch = true; } });
+        E.forEach(e => { if (!back.has(e) && N[e.a].depth + 1 > N[e.b].depth) { N[e.b].depth = N[e.a].depth + 1; ch = true; } });
     }
 }
 
@@ -74,14 +79,18 @@ function select(k) {
 function render() {
     build();
     const lanes = ["deposit", "resource", "job", "building", "tech"], LW = W + GX, TOP = 34;
-    const cell = {}; // "kind|depth" -> nodes in that lane at that tier
-    Object.values(N).forEach(n => (cell[n.kind + "|" + n.depth] = cell[n.kind + "|" + n.depth] || []).push(n));
-    Object.values(cell).forEach(c => c.sort((p, q) => p.order - q.order));
-    const maxDepth = Math.max(0, ...Object.values(N).map(n => n.depth)), bandY = [];
+    const maxDepth = Math.max(0, ...Object.values(N).map(n => n.depth)), STEP = H + GY;
+    const biggest = Math.max(...lanes.map(k => Object.values(N).filter(n => n.kind === k).length));
+    const K = Math.max(STEP / 2, biggest * STEP / (maxDepth + 1)); // vertical room per tier, so the fullest lane is about as tall as the tree
     let y = TOP;
-    for (let d = 0; d <= maxDepth; d++) { bandY[d] = y; y += Math.max(1, ...lanes.map(k => (cell[k + "|" + d] || []).length)) * (H + GY) + 12; }
-    const width = lanes.length * LW + 20, height = y;
-    Object.values(cell).forEach(c => c.forEach((n, r) => { n.x = 10 + lanes.indexOf(n.kind) * LW + GX / 2; n.y = bandY[n.depth] + r * (H + GY); }));
+    lanes.forEach(k => { // pack each lane on its own, in tier order, so empty tiers leave no gaps
+        let ly = TOP;
+        Object.values(N).filter(n => n.kind === k).sort((p, q) => p.depth - q.depth || p.order - q.order).forEach(n => {
+            ly = Math.max(ly, TOP + Math.round(n.depth * K)); n.x = 10 + lanes.indexOf(k) * LW + GX / 2; n.y = ly; ly += STEP;
+        });
+        y = Math.max(y, ly);
+    });
+    const width = lanes.length * LW + 20, height = y + 12;
     els = { n: {}, e: [] };
     const svg = s("svg", { width, height, viewBox: `0 0 ${width} ${height}` });
     svg.onclick = ev => { if (ev.target === svg && sel) select(sel); };

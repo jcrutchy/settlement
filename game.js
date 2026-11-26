@@ -199,15 +199,23 @@ function recenter() { cam = { x: S.center.x + 0.5, y: S.center.y + 0.5 }; }
 const clampZoom = z => Math.max(8, Math.min(64, z));
 
 // --- SIMULATION ---
+function tierFloor() { // what the next buildings and technologies still need of each resource: tiers only eat the surplus above it, so a hungry village can't stop you saving up
+    const m = {}, add = c => { for (const k in c) m[k] = Math.max(m[k] || 0, c[k]); };
+    G.buildings.forEach(b => { if (S.unlocked["bld:" + b.id]) add(costOf(b)); });
+    G.techs.forEach(q => { if (S.unlocked["tech:" + q.id] && !S.tech[q.id]) add(q.cost); });
+    for (const k in m) m[k] = Math.min(m[k], capOf(k) * 0.3);
+    return m;
+}
 function flows(dt) { // production/consumption per second for the next dt seconds
     const R = {}, harvest = {}, paid = {}, T = {};
     let gMult = 0, oMult = 0, satSum = 0, satN = 0;
     G.resources.forEach(r => R[r.id] = { p: 0, c: 0 });
     for (const k in G.pop.needs) R[k].c += S.pop * G.pop.needs[k];
+    const flo = (G.pop.tiers || []).some(t => S.unlocked["tier:" + t.id]) ? tierFloor() : {};
     (G.pop.tiers || []).forEach(t => { // wants beyond bare survival: an unlocked tier eats goods and pays out in proportion to how well they are supplied
         if (!S.unlocked["tier:" + t.id]) return;
         let e = 1;
-        for (const k in t.needs) { const need = S.pop * t.needs[k] * dt; if (need > 0) e = Math.min(e, S.res[k] / need); }
+        for (const k in t.needs) { const need = S.pop * t.needs[k] * dt; if (need > 0) e = Math.min(e, Math.max(0, S.res[k] - (flo[k] || 0)) / need); }
         e = Math.max(0, Math.min(1, e)); T[t.id] = e; satSum += e; satN++;
         for (const k in t.needs) R[k].c += S.pop * t.needs[k] * e;
         const fx = t.effects || {}, lack = t.lack || {};
@@ -698,7 +706,10 @@ function autoTrim() { // release a worker from an input-starved job or an over-s
         if (S.jobs[j.id] > 1 && ks.every(k => S.res[k] >= capOf(k) * 0.98 && netOf(R, k) > 0.15 * R[k].c + 0.5)) { const n = Math.ceil(S.jobs[j.id] / 5); S.jobs[j.id] -= n; S.rev++; autoNote = true; log(`released ${n} ${j.name}${n > 1 ? "s" : ""}: ${ks.map(k => RES[k].name).join("/")} is full.`); autoNote = false; return true; }
     }
     for (const j of G.jobs) {
-        if (S.jobs[j.id] > 0 && Object.keys(j.inputs || {}).some(k => S.res[k] < 1 && netOf(R, k) <= 0)) { S.jobs[j.id]--; S.rev++; autoNote = true; log(`released a ${j.name}: out of ${Object.keys(j.inputs).map(k => RES[k].name).join("/")}.`); autoNote = false; return true; }
+        if (S.jobs[j.id] > 0 && Object.keys(j.inputs || {}).some(k => S.res[k] < 1 && netOf(R, k) <= 0)) { // starved of an input: release a third at once (min 1), not one per tick
+            const n = Math.max(1, Math.ceil(S.jobs[j.id] / 3)); S.jobs[j.id] -= n; S.rev++; autoNote = true;
+            log(`released ${n > 1 ? n : "a"} ${j.name}${n > 1 ? "s" : ""}: out of ${Object.keys(j.inputs).filter(k => S.res[k] < 1 && netOf(R, k) <= 0).map(k => RES[k].name).join("/")}.`); autoNote = false; return true;
+        }
     }
     for (const d of G.deposits) {
         const n = workersOn(d); if (!d.regrow || n < 2) continue;
@@ -717,7 +728,7 @@ function autoAssign() { // put idle settlers where something is actually needed:
             if (!S.unlocked["job:" + j.id] || S.jobs[j.id] >= slotCap(j)) return;
             if (j.deposit && !(S.dep[j.deposit].cap > 0 && S.dep[j.deposit].amt > 1)) return;
             if (j.deposit && DEP[j.deposit].regrow && workersOn(DEP[j.deposit]) >= sustain(DEP[j.deposit])) return; // more hands would only strip the deposit
-            if (Object.keys(j.inputs || {}).some(k => S.res[k] < 5 || (netOf(R, k) < 0 && S.res[k] < 0.5 * capOf(k)))) return; // would stand idle, or deepen a shortage of its input
+            if (Object.keys(j.inputs || {}).some(k => S.res[k] < 5 || (netOf(R, k) < 0 && S.res[k] < 0.5 * capOf(k) && S.res[k] < 300 * j.inputs[k] * (S.jobs[j.id] + 1)))) return; // would stand idle, or deepen a shortage of its input (a stock that covers five minutes of work is fine)
             let score = 0;
             Object.keys(j.outputs).forEach(k => {
                 let w;
@@ -857,11 +868,12 @@ function autoResearch(R, reserve) { // research the affordable technology that u
         [["bld:", G.buildings], ["job:", G.jobs], ["res:", G.resources], ["tech:", G.techs]].forEach(([p, list]) => list.forEach(x => { if (has(x.requires) && !(p === "tech:" ? S.tech[x.id] : S.unlocked[p + x.id])) n++; }));
         return n;
     };
-    let best = null, top = -1;
-    G.techs.filter(q => S.unlocked["tech:" + q.id] && !S.tech[q.id]).forEach(q => { const sc = (refs(q.id) * 3 + (q.effects || []).length) / (1 + sum(q.cost) / 200); if (sc > top) { top = sc; best = q; } });
-    if (!best) return false;
-    if (afford1(best.cost, 1.1) && keeps(best.cost, reserve)) { autoNote = true; research(best.id); autoNote = false; return !!S.tech[best.id]; }
-    addReserve(reserve, best.cost, R); return false;
+    const cands = G.techs.filter(q => S.unlocked["tech:" + q.id] && !S.tech[q.id]).map(q => ({ q, sc: (refs(q.id) * 3 + (q.effects || []).length) / (1 + sum(q.cost) / 200) })).sort((a, b) => b.sc - a.sc);
+    for (const { q } of cands) { // best first; one that is out of reach (a cost nothing is producing) must not block the cheaper ones behind it
+        if (afford1(q.cost, 1.1) && keeps(q.cost, reserve)) { autoNote = true; research(q.id); autoNote = false; return !!S.tech[q.id]; }
+        if (Object.keys(q.cost).every(k => S.res[k] >= q.cost[k] * 0.3 || netOf(R, k) > 0.01)) { addReserve(reserve, q.cost, R); return false; } // within reach: save up for it
+    }
+    return false;
 }
 function producePlan(R) { // build what a wanted resource, or a locked technology, is waiting on
     const w = wants(), keys = Object.keys(w).sort((a, b) => ((S.autoFocus || {})[b] ?? 1) - ((S.autoFocus || {})[a] ?? 1));
