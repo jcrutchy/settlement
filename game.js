@@ -203,7 +203,7 @@ function tierFloor() { // what the next buildings and technologies still need of
     const m = {}, add = c => { for (const k in c) m[k] = Math.max(m[k] || 0, c[k]); };
     G.buildings.forEach(b => { if (S.unlocked["bld:" + b.id]) add(costOf(b)); });
     G.techs.forEach(q => { if (S.unlocked["tech:" + q.id] && !S.tech[q.id]) add(q.cost); });
-    for (const k in m) m[k] = Math.min(m[k], capOf(k) * 0.3);
+    for (const k in m) m[k] = Math.min(m[k] * 1.15, capOf(k) * 0.3); // 15%: automation wants a 10% cushion before it spends
     return m;
 }
 function flows(dt) { // production/consumption per second for the next dt seconds
@@ -323,14 +323,21 @@ function bestTile(bid) { // depots go where hauling improves most; everything el
     const b = bOf(bid), cand = owned().filter(t => !t.b && allowed(b, t.x, t.y));
     if (!cand.length) return null;
     const depot = b.effects.some(e => e.type === "depot");
+    if (!depot) return cand.reduce((best, t) => (dist(t, S.center) < dist(best, S.center) ? t : best), cand[0]);
+    // a depot: work out how much each candidate would shorten every deposit's mean haul. The distance of every deposit tile to its nearest
+    // depot is computed once; a candidate only has to compare against that, instead of re-running haul() for each tile.
+    const ts = owned(), depots = ts.filter(t => isDepot(t.b)), M = G.map;
     const workers = d => G.jobs.reduce((w, j) => w + (j.deposit === d.id ? S.jobs[j.id] : 0), 0);
-    const score = t => {
-        if (!depot) return -dist(t, S.center);
-        t.b = bid; hCache = null;
-        const v = G.deposits.reduce((a, d) => a + haul(d.id).eff * (1 + workers(d)), 0);
-        t.b = null; hCache = null;
-        return v - dist(t, S.center) * 1e-3;
-    };
+    const info = G.deposits.map(d => {
+        const mine = ts.filter(t => dterr(d).includes(terrainAt(t.x, t.y)));
+        return { w: 1 + workers(d), mine, m0: mine.map(t => { let m = Infinity; for (const p of depots) m = Math.min(m, dist(t, p)); return m; }) };
+    });
+    const effOf = avg => Math.max(M.minEfficiency, 1 - M.distancePenalty * Math.max(0, avg - M.freeRadius));
+    const score = t => info.reduce((a, o) => {
+        if (!o.mine.length) return a + o.w;
+        let sum = 0; for (let i = 0; i < o.mine.length; i++) sum += Math.min(o.m0[i], dist(o.mine[i], t));
+        return a + effOf(sum / o.mine.length) * o.w;
+    }, 0) - dist(t, S.center) * 1e-3;
     let best = cand[0], top = -Infinity;
     cand.forEach(t => { const v = score(t); if (v > top) { top = v; best = t; } });
     return best;
@@ -721,25 +728,34 @@ function autoTrim() { // release a worker from an input-starved job or an over-s
     return false;
 }
 function autoAssign() { // put idle settlers where something is actually needed: low food first, then whatever the next purchases lack
-    let did = false;
-    for (let n = getIdle(); n > 0; n--) {
-        const R = flows(1).R, want = wants(); let best = null, top = 0;
+    let did = false, idle = getIdle();
+    while (idle > 0) { // each pass re-plans, then moves a batch (a twelfth of the idle) so thousands of idle settlers cost a dozen passes, not thousands
+        const R = flows(1).R, want = wants(); let best = null, top = 0, bestNeed = Infinity;
         G.jobs.forEach(j => {
             if (!S.unlocked["job:" + j.id] || S.jobs[j.id] >= slotCap(j)) return;
             if (j.deposit && !(S.dep[j.deposit].cap > 0 && S.dep[j.deposit].amt > 1)) return;
             if (j.deposit && DEP[j.deposit].regrow && workersOn(DEP[j.deposit]) >= sustain(DEP[j.deposit])) return; // more hands would only strip the deposit
             if (Object.keys(j.inputs || {}).some(k => S.res[k] < 5 || (netOf(R, k) < 0 && S.res[k] < 0.5 * capOf(k) && S.res[k] < 300 * j.inputs[k] * (S.jobs[j.id] + 1)))) return; // would stand idle, or deepen a shortage of its input (a stock that covers five minutes of work is fine)
-            let score = 0;
+            let score = 0, need = Infinity;
             Object.keys(j.outputs).forEach(k => {
-                let w;
+                let w, nd = Infinity;
                 if (G.pop.needs[k]) { const lvl = Math.min(1, S.res[k] / capOf(k)); w = ((1 - lvl) + (netOf(R, k) < 0 ? 0.5 : 0)) * 3; if (lvl >= 0.98) w = 0; }
-                else { const goal = (want[k] || 0) * 1.5; w = goal > 0 ? Math.max(0, (goal - S.res[k]) / goal) : 0.05; if (S.res[k] >= capOf(k) * 0.98) w = 0; }
-                score = Math.max(score, w * fmul(k) * (1 + 0.5 * j.outputs[k] * yieldOf(j) * (j.deposit ? haul(j.deposit).eff : 1)));
+                else {
+                    const goal = (want[k] || 0) * 1.5, gap = goal - S.res[k] - 15 * netOf(R, k); // what is still missing 15 s from now at the present rate
+                    w = goal > 0 ? Math.max(0, gap / goal) : 0.05; if (S.res[k] >= capOf(k) * 0.98) w = 0;
+                    if (goal > 0) nd = Math.ceil(Math.max(0, gap) / (15 * j.outputs[k] * Math.max(0.05, yieldOf(j))));
+                }
+                const sc = w * fmul(k) * (1 + 0.5 * j.outputs[k] * yieldOf(j) * (j.deposit ? haul(j.deposit).eff : 1));
+                if (sc > score) { score = sc; need = nd; }
             });
-            if (score > top) { top = score; best = j; }
+            if (score > top) { top = score; best = j; bestNeed = need; }
         });
         if (!best) break;
-        S.jobs[best.id]++; did = true;
+        let room = slotCap(best) - S.jobs[best.id];
+        if (best.deposit && DEP[best.deposit].regrow) room = Math.min(room, sustain(DEP[best.deposit]) - workersOn(DEP[best.deposit]));
+        for (const k in best.inputs || {}) room = Math.min(room, Math.max(1, Math.floor(S.res[k] / (300 * best.inputs[k])) - S.jobs[best.id])); // inputs that cover five minutes of work
+        const k = Math.max(1, Math.min(idle, room, bestNeed, Math.ceil(idle / 12))); // never more hands than the shortfall needs
+        S.jobs[best.id] += k; idle -= k; did = true;
     }
     if (did) S.rev++;
     return did;
@@ -779,8 +795,13 @@ function foodPlan(R) { // food is draining and no job has a free slot: the cheap
 function claimOk() { // automation buys land while the price is cheap, and past that only while the economy could pay it off within claimPayMin minutes
     const c = claimCost();
     if (sum(c) <= sum(G.land.cost) * ((G.automation && G.automation.claimMaxMult) || 12)) return true;
-    const R = flows(1).R, secs = ((G.automation && G.automation.claimPayMin) || 10) * 60;
-    return Object.keys(c).every(k => S.res[k] >= c[k] || netOf(R, k) * secs >= c[k] - S.res[k]);
+    const R = flows(1).R, secs = ((G.automation && G.automation.claimPayMin) || 10) * 60, idle = getIdle();
+    const potential = k => G.jobs.reduce((m, j) => { // what idle settlers could add: the best job making k, limited by its free slots and what its deposit sustains
+        if (!j.outputs[k] || !S.unlocked["job:" + j.id] || j.inputs) return m;
+        const room = Math.min(idle, slotCap(j) - S.jobs[j.id], j.deposit && DEP[j.deposit].regrow ? sustain(DEP[j.deposit]) : Infinity);
+        return Math.max(m, Math.max(0, room) * j.outputs[k]);
+    }, 0);
+    return Object.keys(c).every(k => S.res[k] >= c[k] || (netOf(R, k) + potential(k)) * secs >= c[k] - S.res[k]);
 }
 const fmul = k => [0.25, 1, 3][(S.autoFocus || {})[k] ?? 1]; // player's resource focus: low / normal / high
 function wants() { // the biggest single purchase of each resource that is currently on offer
