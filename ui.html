@@ -1,4 +1,5 @@
 <!-- Game markup, injected into index.html at load so UI changes ship together with game.js -->
+<div id="resbar" class="resbar"><div id="resbar-items" class="resbar-items"></div><div id="resbar-detail" class="resbar-detail"></div></div>
 <header>
     <div class="title-bar">
         <h1 id="game-h1">SETTLEMENT</h1>
@@ -53,6 +54,7 @@
                     <span id="pop-counter" class="badge">0 / 0</span>
                 </div>
                 <p class="hint">Idle villagers: <strong id="idle-pop">0</strong> <span id="needs-hint"></span></p>
+                <div id="conds-list" class="stack-list"></div>
                 <div id="gauges-list" class="stack-list"></div>
                 <div id="tiers-list" class="stack-list"></div>
                 <div id="jobs-list" class="stack-list"></div>
@@ -89,6 +91,12 @@
         <section class="panel p-research">
                 <div class="section-header"><h2>Research</h2><span id="tech-count" class="badge">0 known</span></div>
                 <div id="tech-list" class="stack-list"></div>
+            </section>
+
+        <section class="panel p-policy hidden" id="policy-panel">
+                <h2>Policies</h2>
+                <p class="hint">One per group. Adopting costs knowledge; running costs knowledge per settler, so a policy gets dearer as you grow. Unpaid, it fades.</p>
+                <div id="policy-list"></div>
             </section>
 
         <section class="panel p-build">

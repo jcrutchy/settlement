@@ -35,7 +35,7 @@ function newState(seed, prev) {
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) own[K(c.x + dx, c.y + dy)] = { x: c.x + dx, y: c.y + dy, b: null };
     own[K(c.x, c.y)].b = "center";
     const s = { version: 4, seed, rev: prev ? prev.rev + 1 : 0, cloudRev: prev ? prev.cloudRev : 0, lastTick: Date.now(),
-        res: {}, unlocked: {}, tech: {}, pop: 0, growth: 0, starve: 0, jobs: {}, bld: {}, claims: 0, cond: {}, gauge: {}, center: c, own, dep: {},
+        res: {}, unlocked: {}, tech: {}, pop: 0, growth: 0, starve: 0, jobs: {}, bld: {}, claims: 0, cond: {}, gauge: {}, pol: {}, mods: [], evCool: {}, time: 0, center: c, own, dep: {},
         logs: [`You arrive at a quiet clearing (seed ${seed}). Gather wood to build shelter.`] };
     G.deposits.forEach(d => { const k = poolCap(s, d); s.dep[d.id] = { cap: k, amt: k }; });
     return s;
@@ -50,6 +50,9 @@ function ensure() { // fills in anything new in gamedata.json, and repairs NaN l
     G.buildings.forEach(b => { if (S.bld[b.id] === undefined) S.bld[b.id] = 0; });
     G.deposits.forEach(d => { if (!S.dep[d.id]) { const k = poolCap(S, d); S.dep[d.id] = { cap: k, amt: k }; } });
     S.gauge = S.gauge || {}; (G.gauges || []).forEach(g => { if (!Number.isFinite(S.gauge[g.id])) S.gauge[g.id] = g.start ?? 0.6; });
+    S.pol = S.pol || {}; S.mods = S.mods || []; S.evCool = S.evCool || {}; S.time = S.time || 0;
+    if (S.nextEvent === undefined) S.nextEvent = S.time + ((G.eventTiming || {}).grace || 600);
+    if (S.rng === undefined) S.rng = ((S.seed >>> 0) ^ 0x9e3779b9) >>> 0;
 }
 
 // startNew is defined with the new-game options below
@@ -67,7 +70,7 @@ function met(c) {
 
 function checkUnlocks(silent) {
     let changed = false;
-    [["res", G.resources, "Discovered resource"], ["job", G.jobs, "New role available"], ["bld", G.buildings, "New structure unlocked"], ["tech", G.techs, "Technology available"], ["tier", G.pop.tiers || [], "New need"]].forEach(([k, list, msg]) => {
+    [["res", G.resources, "Discovered resource"], ["job", G.jobs, "New role available"], ["bld", G.buildings, "New structure unlocked"], ["tech", G.techs, "Technology available"], ["tier", G.pop.tiers || [], "New need"], ["pol", G.policies || [], "Policy available"]].forEach(([k, list, msg]) => {
         list.forEach(x => {
             const key = k + ":" + x.id;
             if (!S.unlocked[key] && met(x.requires)) { S.unlocked[key] = true; changed = true; if (!silent) log(`${msg}: ${x.name}.`); }
@@ -104,6 +107,8 @@ function eff(type, key) { // sum of an effect type across everything built and e
     const add = (list, n) => list.forEach(e => { if (e.type === type && (key === undefined || e.resource === key || (type === "capacity" && e.resource === "*"))) t += e.value * n; });
     G.buildings.forEach(b => { if (S.bld[b.id]) add(b.effects, S.bld[b.id] * (type === "housing" ? 1 : strength(b.id))); });
     G.techs.forEach(q => { if (S.tech[q.id]) add(q.effects || [], 1); });
+    (G.policies || []).forEach(p => { if (S.pol[p.id]) add(p.effects || [], S.pol[p.id].str); }); // a policy fades while its upkeep goes unpaid
+    S.mods.forEach(m => add(m.effects, 1)); // timed conditions from events
     return t;
 }
 
@@ -223,6 +228,7 @@ function flows(dt) { // production/consumption per second for the next dt second
         oMult += (fx.output || 0) * e + (lack.output || 0) * (1 - e);
     });
     (G.gauges || []).forEach(g => { const x = gaugeFx(g); gMult += x.growth; oMult += x.output; });
+    gMult += eff("growth"); oMult += eff("output"); // policies and conditions
     const om = Math.max(0.2, 1 + oMult);
     G.resources.forEach(r => { if (r.spoil) R[r.id].c += S.res[r.id] * r.spoil / (1 + eff("preserve", r.id)); }); // stock rots; preserve effects slow it
     G.buildings.forEach(b => { // upkeep: unpaid maintenance wears the building down (see step)
@@ -231,6 +237,14 @@ function flows(dt) { // production/consumption per second for the next dt second
         for (const k in b.upkeep) { const need = cnt * b.upkeep[k] * dt; if (need > 0) e = Math.min(e, S.res[k] / need); }
         e = Math.min(1, e); paid[b.id] = e;
         for (const k in b.upkeep) R[k].c += cnt * b.upkeep[k] * e;
+    });
+    const paidP = {};
+    (G.policies || []).forEach(p => { // upkeep is per settler: a policy costs more to run in a bigger settlement
+        if (!S.pol[p.id] || !p.upkeep) return;
+        let e = 1;
+        for (const k in p.upkeep) { const need = S.pop * p.upkeep[k] * dt; if (need > 0) e = Math.min(e, S.res[k] / need); }
+        e = Math.min(1, e); paidP[p.id] = e;
+        for (const k in p.upkeep) R[k].c += S.pop * p.upkeep[k] * e;
     });
     G.jobs.forEach(j => {
         const n = S.jobs[j.id]; if (!n) return;
@@ -246,7 +260,7 @@ function flows(dt) { // production/consumption per second for the next dt second
         }
         for (const k in j.inputs || {}) R[k].c += n * j.inputs[k] * e;
     });
-    return { R, harvest, paid, T, gMult, oMult, mood: satN ? satSum / satN : 1 };
+    return { R, harvest, paid, paidP, T, gMult, oMult, mood: satN ? satSum / satN : 1 };
 }
 
 function trimJobs() {
@@ -258,7 +272,7 @@ function trimJobs() {
 }
 
 function step(dt) {
-    const { R, harvest, paid, gMult, mood } = flows(dt);
+    const { R, harvest, paid, paidP, gMult, mood } = flows(dt);
     G.resources.forEach(r => { const x = R[r.id]; S.res[r.id] = Math.max(0, Math.min(S.res[r.id] + (x.p - x.c) * dt, capOf(r.id))); });
     const U = G.upkeep || { decay: 0.002, repair: 0.01 };
     G.buildings.forEach(b => { // unpaid upkeep wears a building type down; paid upkeep repairs it
@@ -271,6 +285,10 @@ function step(dt) {
     });
     const sig = gaugeSignals({ R, mood });
     (G.gauges || []).forEach(g => { const v = S.gauge[g.id], sp = (g.speed || 0.004) * dt; S.gauge[g.id] = clamp01(v + Math.max(-sp, Math.min(sp, gaugeTarget(g, sig) - v))); });
+    S.time += dt;
+    (G.policies || []).forEach(p => { const st = S.pol[p.id]; if (!st) return; const e = paidP[p.id] === undefined ? 1 : paidP[p.id]; st.str = Math.max(0, Math.min(1, e < 0.999 ? st.str - 0.02 * dt * (1 - e) : st.str + 0.05 * dt)); });
+    if (S.mods.length) { S.mods.forEach(m => { m.left -= dt; }); S.mods.filter(m => m.left <= 0).forEach(m => { if (!quiet) log(`${m.icon} ${m.name} has passed.`); }); S.mods = S.mods.filter(m => m.left > 0); }
+    if (!quiet && G.events && S.time >= S.nextEvent) { if (S.pop >= ((G.eventTiming || {}).minPop || 15)) rollEvent(); const t = G.eventTiming || { min: 180, max: 480 }; S.nextEvent = S.time + t.min + rnd() * (t.max - t.min); }
     G.deposits.forEach(d => { // logistic regrowth; tiny floor so a depleted deposit can recover
         const s = S.dep[d.id], seed = Math.max(s.amt, 0.02 * s.cap);
         s.amt = Math.max(0, Math.min(s.cap, s.amt - (harvest[d.id] || 0) * dt + (s.cap > 0 ? d.regrow * seed * (1 - s.amt / s.cap) * dt : 0)));
@@ -291,6 +309,61 @@ function step(dt) {
     }
 }
 
+// --- POLICIES (adopted with knowledge, one per group, upkeep grows with the settlement) and EVENTS (luck, shaped by gauges, techs, buildings and policies) ---
+const polOf = id => (G.policies || []).find(p => p.id === id);
+function rnd() { // small seeded generator (mulberry32) kept in the save, so a run's events are reproducible
+    S.rng = (S.rng + 0x6D2B79F5) >>> 0; let t = S.rng;
+    t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function adopt(id) {
+    const p = polOf(id);
+    if (!p || S.pol[id] || !S.unlocked["pol:" + id] || !afford(p.cost)) return false;
+    (G.policies || []).forEach(o => { if (o.group === p.group && S.pol[o.id]) { delete S.pol[o.id]; log(`Revoked ${o.name}.`); } }); // one per group
+    spend(p.cost); S.pol[id] = { str: 1 }; S.rev++; log(`Adopted policy: ${p.name}.`); renderAll(); return true;
+}
+function revoke(id) { if (!S.pol[id]) return; delete S.pol[id]; S.rev++; log(`Revoked ${polOf(id).name}.`); renderAll(); }
+const togglePolicy = id => (S.pol[id] ? revoke(id) : adopt(id));
+function addMod(id, m) { S.mods = S.mods.filter(x => x.id !== id); S.mods.push({ id, name: m.name, icon: m.icon || "", left: m.duration, effects: m.effects || [] }); }
+function eventWeight(ev) { // base weight, raised by a poor gauge, lowered by the techs, buildings and policies that guard against it
+    let w = ev.weight ?? 1;
+    (ev.risk || []).forEach(r => { const v = S.gauge[r.gauge]; w *= 1 + r.k * (1 - (Number.isFinite(v) ? v : 1)); });
+    (ev.shield || []).forEach(sh => {
+        if (sh.tech) { if (S.tech[sh.tech]) w *= sh.factor; }
+        else if (sh.policy) { if (S.pol[sh.policy]) w *= sh.factor; }
+        else if (sh.building) w *= 1 - Math.min(sh.max ?? 0.8, sh.per * (S.bld[sh.building] || 0));
+    });
+    return Math.max(0, w);
+}
+function rollEvent() {
+    const c = G.events.filter(ev => (S.evCool[ev.id] || 0) <= S.time && met(ev.requires) && S.pop >= (ev.minPop || 0)).map(ev => ({ ev, w: eventWeight(ev) })).filter(x => x.w > 0);
+    const tot = c.reduce((a, x) => a + x.w, 0); if (!tot) return;
+    let r = rnd() * tot; for (const x of c) { r -= x.w; if (r <= 0) return fireEvent(x.ev); }
+    fireEvent(c[c.length - 1].ev);
+}
+function fireEvent(ev) {
+    const per = Math.max(1, S.pop / 100), bits = [];
+    if (ev.pop) { // fraction of the population; arrivals only fill free housing
+        const d = ev.pop < 0 ? -Math.min(S.pop - 1, Math.round(S.pop * -ev.pop)) : Math.max(0, Math.min(Math.round(S.pop * ev.pop), housing() - S.pop));
+        if (d) { S.pop += d; bits.push((d > 0 ? "+" : "") + d + " settlers"); if (d < 0) trimJobs(); }
+    }
+    for (const k in ev.lose || {}) { const l = S.res[k] * ev.lose[k]; if (l >= 1) { S.res[k] -= l; bits.push("-" + fmt(l) + " " + RES[k].name.toLowerCase()); } }
+    for (const k in ev.gain || {}) { const g = Math.min(capOf(k) - S.res[k], ev.gain[k] * per); if (g >= 1) { S.res[k] += g; bits.push("+" + fmt(g) + " " + RES[k].name.toLowerCase()); } }
+    if (ev.wear) G.buildings.forEach(b => { if (b.upkeep && S.bld[b.id]) S.cond[b.id] = Math.max(0, (S.cond[b.id] === undefined ? 1 : S.cond[b.id]) - ev.wear); });
+    if (ev.mod) addMod(ev.id, { icon: ev.icon, ...ev.mod });
+    S.evCool[ev.id] = S.time + (ev.cooldown || 600); S.rev++;
+    log(`${ev.icon} ${ev.name}: ${ev.text}${bits.length ? " (" + bits.join(", ") + ")" : ""}${ev.mod ? " " + ev.mod.name + " for " + dur(ev.mod.duration) + "." : ""}`);
+}
+function autoPolicy(R, rs) { // fill an empty policy group with the best-ranked policy that is affordable and sustainable; never replaces one you chose
+    const taken = new Set(Object.keys(S.pol).map(id => polOf(id).group));
+    const cands = (G.policies || []).filter(p => S.unlocked["pol:" + p.id] && !S.pol[p.id] && !taken.has(p.group) && (p.rank || 0) > 0).sort((a, b) => b.rank - a.rank);
+    for (const p of cands) {
+        const ok = Object.keys(p.upkeep || {}).every(k => S.res[k] >= S.pop * p.upkeep[k] * 600 || netOf(R, k) > S.pop * p.upkeep[k]); // ten minutes of upkeep in hand, or income that covers it
+        if (ok && afford1(p.cost, 1.1) && keeps(p.cost, rs)) { autoNote = true; adopt(p.id); autoNote = false; return !!S.pol[p.id]; }
+    }
+    return false;
+}
+
 function advance() { // simulate real elapsed time since lastTick, in chunks
     const now = Date.now(), total = Math.min((now - S.lastTick) / 1000, G.meta.maxOfflineSec);
     S.lastTick = now;
@@ -299,6 +372,7 @@ function advance() { // simulate real elapsed time since lastTick, in chunks
     let left = total;
     quiet = away; popFloor = away ? Math.ceil(S.pop * 0.75) : 0; // away: at most a quarter can starve
     while (left > 0) { const dt = Math.min(st, left); step(dt); left -= dt; }
+    if (away) S.nextEvent = Math.max(S.nextEvent, S.time + 60); // no event the moment you come back
     quiet = false;
     if (away) log(`Welcome back. Simulated ${Math.round(total / 60)} min away; population ${S.pop >= p0 ? "+" : ""}${S.pop - p0}.`);
     return checkUnlocks();
@@ -413,6 +487,7 @@ function renderAll() {
     $("manual-actions").innerHTML = rs.filter(r => r.manual).map(r => `<button onclick="gather('${r.id}')">+ Gather ${r.name}</button>`).join("");
     $("tiers-list").innerHTML = (G.pop.tiers || []).filter(t => S.unlocked["tier:" + t.id]).map(t => `<div class="row-item"><div class="row-info"><strong>${esc(((t.icon || "") + " " + t.name).trim())}</strong><span id="tier-info-${t.id}"></span></div><span class="badge" id="tier-val-${t.id}">0%</span></div>`).join("");
     $("gauges-list").innerHTML = (G.gauges || []).map(g => `<div class="row-item"><div class="row-info"><strong>${esc(((g.icon || "") + " " + g.name).trim())}</strong><span id="gauge-info-${g.id}"></span></div><span class="badge" id="gauge-val-${g.id}">0%</span></div>`).join("");
+    buildBar(); renderPolicies();
     $("deposits-list").innerHTML = G.deposits.map(d => `<div class="row-item"><div class="row-info"><strong>${d.name}</strong><span id="dep-${d.id}"></span></div></div>`).join("");
     $("jobs-list").innerHTML = G.jobs.filter(j => S.unlocked["job:" + j.id]).map(j => `<div class="row-item"><div class="row-info"><strong>${j.name}</strong><span id="job-info-${j.id}"></span></div><div class="button-row" style="align-items:center;"><button onclick="adjustJob('${j.id}',-1)">-</button><span class="badge" id="job-val-${j.id}">0</span><button id="job-add-${j.id}" onclick="adjustJob('${j.id}',1)">+</button></div></div>`).join("");
     $("buildings-list").innerHTML = G.buildings.filter(b => S.unlocked["bld:" + b.id]).map(b => `<div class="row-item"><div class="row-info"><strong id="bld-name-${b.id}"></strong><span id="bld-desc-${b.id}"></span></div><button id="bld-btn-${b.id}" onclick="build('${b.id}')">Build</button></div>`).join("");
@@ -445,7 +520,7 @@ function renderMap() { // info line and buttons, then the canvas
 
 // --- RENDERERS & DISPLAY SETTINGS (graphics are pluggable; see render-classic.js for the contract) ---
 const RENDERERS = (window.SettlementRenderers = window.SettlementRenderers || {}), SKEY = "settlement_settings";
-let SETTINGS = { available: [["classic", "Classic"]], render: { renderer: "classic", options: {} }, layout: { mapHeightVh: 55 } }, animOn = false;
+let SETTINGS = { available: [["classic", "Classic"]], render: { renderer: "classic", options: {} }, layout: { mapHeightVh: 55, resources: "auto" } }, animOn = false;
 const WORLD = { // the read-only view of the game that renderers draw from
     terrainAt: (x, y) => terrainAt(x, y), terrain: id => TD[id], fallbackTerrain: () => G.map.terrain[G.map.terrain.length - 1].id,
     tile: (x, y) => S.own[K(x, y)] || null, key: K, claimable: (x, y) => claimable(x, y), allowed: (b, x, y) => allowed(b, x, y),
@@ -455,7 +530,10 @@ const WORLD = { // the read-only view of the game that renderers draw from
 const curRenderer = () => RENDERERS[SETTINGS.render.renderer];
 const optsOf = rd => Object.fromEntries((rd.options || []).map(o => [o.id, ((SETTINGS.render.options[SETTINGS.render.renderer] || {})[o.id]) ?? o.default]));
 const saveSettings = () => { try { localStorage.setItem(SKEY, JSON.stringify({ render: SETTINGS.render, layout: SETTINGS.layout })); } catch (e) { /* ignore */ } };
-const applyLayout = () => { $("map").style.height = SETTINGS.layout.mapHeightVh + "vh"; };
+const applyLayout = () => { // resources: "bar" is the compact Civ-style top bar, "boxes" the stockpile cards, "auto" picks the bar on narrow screens
+    $("map").style.height = SETTINGS.layout.mapHeightVh + "vh"; const m = SETTINGS.layout.resources;
+    document.body.classList.toggle("resbar", m === "bar" || (m === "auto" && window.innerWidth < 900));
+};
 
 async function loadSettings() {
     let d = {}; try { const r = await fetchFresh("settings.json"); if (r.ok) d = await r.json(); } catch (e) { /* defaults */ }
@@ -503,7 +581,9 @@ function renderDisplayUI() {
         return mk("label", { className: "hint", style: "display:block;margin:4px 0;" }, mk("input", { type: "checkbox", checked: !!cur, onchange: e => { (SETTINGS.render.options[SETTINGS.render.renderer] = SETTINGS.render.options[SETTINGS.render.renderer] || {})[o.id] = e.target.checked; saveSettings(); drawMap(); } }), " " + o.label);
     });
     const height = mk("input", { type: "range", min: 30, max: 90, value: SETTINGS.layout.mapHeightVh, oninput: e => { SETTINGS.layout.mapHeightVh = +e.target.value; applyLayout(); drawMap(); }, onchange: saveSettings });
-    box.replaceChildren(row("Graphics", pick), ...opts, row("Map height", height));
+    const resPick = mk("select", { onchange: e => { SETTINGS.layout.resources = e.target.value; applyLayout(); saveSettings(); } }, ...[["auto", "Auto (bar on narrow screens)"], ["bar", "Compact top bar"], ["boxes", "Boxes"]].map(([id, name]) => mk("option", { value: id, textContent: name })));
+    resPick.value = SETTINGS.layout.resources;
+    box.replaceChildren(row("Graphics", pick), ...opts, row("Map height", height), row("Resources", resPick));
     renderAutoUI();
 }
 
@@ -564,6 +644,62 @@ const tierFx = t => { // short text for the Population panel: what a tier pays o
     return [bit(t.effects || {}) && `supplied: ${bit(t.effects)}`, bit(t.lack || {}) && `short: ${bit(t.lack)}`].filter(Boolean).join(" · ") || "no effect";
 };
 
+function effText(list) { // short readable form of an effect list
+    const pc = v => (v > 0 ? "+" : "") + Math.round(v * 100) + "%", nm = k => (RES[k] ? RES[k].name.toLowerCase() : k);
+    return list.map(e => e.type === "output" ? `${pc(e.value)} output` : e.type === "growth" ? `${pc(e.value)} arrivals` : e.type === "outputMult" ? `${pc(e.value)} ${nm(e.resource)}`
+        : e.type === "gauge" ? `${pc(e.value)} ${((G.gauges || []).find(g => g.id === e.resource) || { name: e.resource }).name.toLowerCase()}` : e.type === "capacity" ? `+${e.value} ${e.resource === "*" ? "storage" : nm(e.resource) + " storage"}`
+        : e.type === "preserve" ? `slower ${nm(e.resource)} spoilage` : e.type).join(", ");
+}
+const upkeepStr = o => Object.entries(o || {}).map(([k, v]) => `${+(S.pop * v * 60).toFixed(1)}/min ${RES[k].name.toLowerCase()}`).join(" + ");
+function renderPolicies() {
+    const list = (G.policies || []).filter(p => S.unlocked["pol:" + p.id]);
+    $("policy-panel").classList.toggle("hidden", !list.length);
+    $("policy-list").innerHTML = (G.policyGroups || []).map(g => {
+        const ps = list.filter(p => p.group === g.id); if (!ps.length) return "";
+        return `<h3 class="muted" style="margin:10px 0 4px;">${esc(g.name)}</h3>` + ps.map(p => `<div class="row-item"><div class="row-info"><strong>${esc(p.icon + " " + p.name)}</strong><span id="pol-desc-${p.id}"></span></div><button id="pol-btn-${p.id}" onclick="togglePolicy('${p.id}')">Adopt</button></div>`).join("");
+    }).join("");
+}
+function updatePolicies() {
+    (G.policies || []).forEach(p => {
+        const d = $("pol-desc-" + p.id); if (!d) return;
+        const on = S.pol[p.id], other = (G.policies || []).some(o => o.group === p.group && o.id !== p.id && S.pol[o.id]);
+        d.textContent = `${p.desc} (${effText(p.effects)}) · Cost: ${costStr(p.cost)}${p.upkeep ? " · Upkeep: " + upkeepStr(p.upkeep) : ""}${on && on.str < 0.99 ? " · LAPSING " + Math.round(on.str * 100) + "%: upkeep unpaid" : ""}`;
+        const b = $("pol-btn-" + p.id); b.textContent = on ? "Revoke" : other ? "Replace" : "Adopt"; b.disabled = !on && !afford(p.cost);
+        b.className = on ? "btn-primary" : "";
+    });
+}
+let lastConds = "";
+function renderConds() { // timed conditions from events, shown at the top of the Population panel
+    const h = S.mods.map(m => `<div class="row-item"><div class="row-info"><strong>${esc((m.icon + " " + m.name).trim())}</strong><span>${esc(effText(m.effects))} · ${dur(m.left)} left</span></div></div>`).join("");
+    if (h !== lastConds) { lastConds = h; $("conds-list").innerHTML = h; }
+}
+// --- compact resource bar (Display > Resources) ---
+let selBar = null;
+function buildBar() {
+    const rs = G.resources.filter(r => S.unlocked["res:" + r.id]);
+    $("resbar-items").innerHTML = `<span class="ri" data-k="pop">👥<b id="rb-pop"></b></span>` + (G.gauges || []).map(g => `<span class="ri" data-k="g:${g.id}">${g.icon || ""}<b id="rb-g-${g.id}"></b></span>`).join("")
+        + rs.map(r => `<span class="ri" data-k="r:${r.id}">${r.icon}<b id="rb-v-${r.id}"></b><small id="rb-n-${r.id}"></small></span>`).join("");
+    $("resbar-items").onclick = e => { const t = e.target.closest(".ri"); if (t) { selBar = selBar === t.dataset.k ? null : t.dataset.k; renderDynamic(); } };
+}
+function renderBar(R) {
+    const set = (id, t) => { const e = $(id); if (e && e.textContent !== t) e.textContent = t; }, nf = v => (Math.abs(v) >= 100 ? fmt(Math.abs(v)) : Math.abs(v).toFixed(1));
+    set("rb-pop", `${S.pop}/${housing()}`);
+    (G.gauges || []).forEach(g => set("rb-g-" + g.id, Math.round(S.gauge[g.id] * 100) + "%"));
+    G.resources.forEach(r => {
+        const b = $("rb-v-" + r.id); if (!b) return;
+        const x = R[r.id], net = x.p - x.c, cap = capOf(r.id);
+        set("rb-v-" + r.id, fmt(S.res[r.id])); set("rb-n-" + r.id, Math.abs(net) < 0.05 ? "" : (net > 0 ? "+" : "−") + nf(net));
+        b.className = S.res[r.id] >= cap - 0.01 && net >= 0 ? "full" : S.res[r.id] < 1 && net < 0 ? "low" : "";
+        $("rb-n-" + r.id).className = net > 0.05 ? "pos" : net < -0.05 ? "neg" : "";
+    });
+    let d = "";
+    if (selBar === "pop") d = `Population ${S.pop} of ${housing()} housing · ${getIdle()} idle`;
+    else if (selBar && selBar.startsWith("g:")) { const g = G.gauges.find(x => "g:" + x.id === selBar); d = `${g.name} ${Math.round(S.gauge[g.id] * 100)}% · below ${Math.round(g.low.at * 100)}%: ${fxBits(g.low)}${g.high ? " · above " + Math.round(g.high.at * 100) + "%: " + fxBits(g.high) : ""}`; }
+    else if (selBar && selBar.startsWith("r:")) { const r = RES[selBar.slice(2)], x = R[r.id], net = x.p - x.c, cap = capOf(r.id); d = `${r.icon} ${r.name} ${fmt(S.res[r.id])} / ${fmt(cap)} · made ${x.p.toFixed(1)}/s · used ${x.c.toFixed(1)}/s · net ${net > 0 ? "+" : ""}${net.toFixed(1)}/s${net > 0 && S.res[r.id] < cap ? " · full in " + dur((cap - S.res[r.id]) / net) : net < 0 && S.res[r.id] > 0 ? " · empty in " + dur(S.res[r.id] / -net) : ""}`; }
+    else { const act = [...Object.keys(S.pol).map(id => polOf(id).name), ...S.mods.map(m => `${m.name} (${dur(m.left)})`)]; d = act.length ? "Active: " + act.join(" · ") : "Tap a resource for details"; }
+    set("resbar-detail", d);
+}
+
 function renderDynamic() {
     const { R, harvest, T, mood } = flows(1), set = (id, t) => { const e = $(id); if (e) e.textContent = t; };
     G.resources.forEach(r => {
@@ -574,6 +710,7 @@ function renderDynamic() {
         const n = $("res-net-" + r.id);
         if (n) { const full = net > 0 && S.res[r.id] >= capOf(r.id) - 0.01; n.textContent = full ? "FULL, wasting" : "Net: " + (net > 0 ? "+" : "") + net.toFixed(1); n.className = "rate-badge " + (net > 0 ? "positive" : net < 0 ? "negative" : "neutral"); }
     });
+    renderBar(R); renderConds(); updatePolicies();
     G.deposits.forEach(d => {
         const s = S.dep[d.id], hl = haul(d.id), rate = harvest[d.id] || 0;
         const y = d.regrow ? `yield ${s.cap > 0 ? Math.round(100 * s.amt / s.cap) : 0}% (regrows)` : rate > 0 ? `lasts ${dur(s.amt / rate)} at this rate` : s.amt > 0 ? "finite, untouched" : "exhausted";
@@ -930,7 +1067,7 @@ function welfarePlan() { // the building that best lifts the gauge whose target 
     });
     return best;
 }
-const AUTO_KEYS = { food: "feed", storage: "storage", research: "research", production: "production", housing: "housing", welfare: "welfare", land: "claim" };
+const AUTO_KEYS = { food: "feed", storage: "storage", research: "research", production: "production", housing: "housing", welfare: "welfare", policy: "policy", land: "claim" };
 const AUTO_STEPS = {
     food: (R, rs) => { if (autoFeed(R)) return true; const f = foodPlan(R); return f ? buyBuilding(f.b, rs, R) : false; },
     storage: (R, rs, a) => { const b = storagePlan(R); if (!b) return false; return canPlace(b) ? buyBuilding(b, rs, R) : !!a.claim && autoClaim(true, rs); },
@@ -938,6 +1075,7 @@ const AUTO_STEPS = {
     production: (R, rs) => { const p = producePlan(R); return p ? buyBuilding(p.b, rs, R) : false; },
     housing: (R, rs) => autoHousing(rs),
     welfare: (R, rs) => { const b = welfarePlan(); return b ? buyBuilding(b, rs, R) : false; },
+    policy: (R, rs) => autoPolicy(R, rs),
     land: (R, rs) => autoClaim(false, rs)
 };
 function autoOrder() { // the player's order first, then any categories they have not placed
@@ -1068,7 +1206,7 @@ async function init() {
     document.title = G.meta.title; $("game-h1").textContent = G.meta.title;
     S = loadLocal();
     if (S) { applyRules(S.rules); ensure(); recenter(); } else startNew(randSeed());
-    await loadSettings(); applyLayout(); await useRenderer(); renderDisplayUI();
+    await loadSettings(); applyLayout(); window.addEventListener("resize", applyLayout); await useRenderer(); renderDisplayUI();
     loadCredsUI(); syncUI(); bindEvents();
     advance(); checkUnlocks(); renderAll();
     setInterval(() => { const a = advance(), b = runAuto(); a || b ? renderAll() : renderDynamic(); sampleHist(); }, 1000);

@@ -117,6 +117,59 @@
             if (!buildings.some(b => (b.effects || []).some(e => e.type === "gauge" && e.resource === g.id))) warn(w, "no building raises this gauge, so automation cannot help it");
         });
 
+        // policies and events: both use one shared effect list (growth, output, outputMult, gauge, capacity, preserve); values may be negative
+        const MODS = ["growth", "output", "outputMult", "gauge", "capacity", "preserve"];
+        const checkMod = (list, w) => {
+            if (!Array.isArray(list) || !list.length) return err(w, "effects must be a non-empty array");
+            list.forEach(e => {
+                if (!MODS.includes(e.type)) return err(w, `unknown effect type "${e.type}" (${MODS.join(", ")})`);
+                if (typeof e.value !== "number" || !isFinite(e.value)) return err(w, "effect value must be a number");
+                if (e.type === "gauge") { if (!gaugeIds.has(e.resource)) err(w, `gauge effect references unknown gauge "${e.resource}"`); }
+                else if (e.type === "growth" || e.type === "output") { if (e.resource !== undefined) warn(w, `"${e.type}" ignores resource`); }
+                else if (!(e.type === "capacity" && e.resource === "*") && !hasRes(e.resource)) err(w, `${e.type} references unknown resource "${e.resource}"`);
+            });
+        };
+        const groups = Array.isArray(G.policyGroups) ? G.policyGroups : [], groupIds = new Set(groups.map(g => g.id)), policies = Array.isArray(G.policies) ? G.policies : [], polIds = new Set();
+        if (G.policies !== undefined && !Array.isArray(G.policies)) err("policies", "must be an array");
+        groups.forEach(g => { if (!g.id || !g.name) err("policyGroups", "each group needs an id and a name"); });
+        policies.forEach((p, i) => {
+            const w = `policy "${p.id || i}"`;
+            if (!p.id || polIds.has(p.id)) err(w, "missing or duplicate id"); else polIds.add(p.id);
+            if (!p.name) warn(w, "missing name");
+            if (!groupIds.has(p.group)) err(w, `group "${p.group}" is not in policyGroups`);
+            walk(p.requires, w); checkMap(p.cost, w, "cost"); if (p.upkeep !== undefined) checkMap(p.upkeep, w, "upkeep (per settler per second)");
+            checkMod(p.effects, w);
+            if (p.rank !== undefined && typeof p.rank !== "number") err(w, "rank must be a number (automation adopts higher ranks first; 0 or less is never automatic)");
+        });
+        const evs = Array.isArray(G.events) ? G.events : [], evIds = new Set();
+        if (G.events !== undefined && !Array.isArray(G.events)) err("events", "must be an array");
+        if (evs.length) {
+            const T = G.eventTiming;
+            if (!T || !isNum(T.min, 1) || !isNum(T.max, 1) || T.max < T.min) err("eventTiming", "needs min and max seconds between events (max >= min)");
+            else if (T.grace !== undefined && !isNum(T.grace, 0)) err("eventTiming", "grace must be a number of seconds");
+        }
+        evs.forEach((e, i) => {
+            const w = `event "${e.id || i}"`;
+            if (!e.id || evIds.has(e.id)) err(w, "missing or duplicate id"); else evIds.add(e.id);
+            if (!e.name || !e.text) warn(w, "needs a name and a text line for the log");
+            if (e.weight !== undefined && !isNum(e.weight, 1e-9)) err(w, "weight must be a positive number");
+            if (e.cooldown !== undefined && !isNum(e.cooldown, 0)) err(w, "cooldown must be a number of seconds");
+            walk(e.requires, w);
+            (e.risk || []).forEach(r => { if (!gaugeIds.has(r.gauge)) err(w, `risk references unknown gauge "${r.gauge}"`); if (typeof r.k !== "number") err(w, "risk.k must be a number"); });
+            (e.shield || []).forEach(sh => {
+                const f = typeof sh.factor === "number" && sh.factor >= 0 && sh.factor <= 1;
+                if (sh.tech !== undefined) { if (!ids.techs.has(sh.tech)) err(w, `shield references unknown tech "${sh.tech}"`); if (!f) err(w, "shield.factor must be 0 to 1"); }
+                else if (sh.policy !== undefined) { if (!polIds.has(sh.policy)) err(w, `shield references unknown policy "${sh.policy}"`); if (!f) err(w, "shield.factor must be 0 to 1"); }
+                else if (sh.building !== undefined) { if (!ids.buildings.has(sh.building)) err(w, `shield references unknown building "${sh.building}"`); if (!isNum(sh.per, 1e-9)) err(w, "shield.per must be a positive number"); }
+                else err(w, "shield entry needs tech, policy or building");
+            });
+            ["lose", "gain"].forEach(f => Object.keys(e[f] || {}).forEach(k => { if (!hasRes(k)) err(w, `${f} references unknown resource "${k}"`); else if (!isNum(e[f][k], 1e-12) || (f === "lose" && e[f][k] > 1)) err(w, `${f}.${k} must be positive${f === "lose" ? " and at most 1 (a fraction of stock)" : " (an amount per 100 settlers)"}`); }));
+            if (e.pop !== undefined && !(typeof e.pop === "number" && Math.abs(e.pop) <= 0.5)) err(w, "pop must be a fraction between -0.5 and 0.5");
+            if (e.wear !== undefined && !(typeof e.wear === "number" && e.wear > 0 && e.wear <= 1)) err(w, "wear must be between 0 and 1");
+            if (e.mod !== undefined) { if (!e.mod.name || !isNum(e.mod.duration, 1)) err(w, "mod needs a name and a duration in seconds"); checkMod(e.mod.effects, w + " mod"); }
+            if (!e.pop && !e.wear && !e.mod && !Object.keys(e.lose || {}).length && !Object.keys(e.gain || {}).length) warn(w, "has no outcome, so it only writes a log line");
+        });
+
         // buildings
         const capGivers = {}; // resource -> [building ids]; "*" = all
         buildings.forEach(b => {
@@ -180,7 +233,7 @@
             if (!buildings.some(b => (b.effects || []).some(e => e.type === "depot"))) warn("map", "no building has a depot effect, so hauling distance can never be reduced");
         }
         if (G.automation !== undefined) {
-            const A = G.automation, cats = ["food", "storage", "research", "production", "housing", "welfare", "land"];
+            const A = G.automation, cats = ["food", "storage", "research", "production", "housing", "welfare", "policy", "land"];
             if (!Array.isArray(A.order) || A.order.some(c => !cats.includes(c))) err("automation", `order must list categories from: ${cats.join(", ")}`);
             ["claimMaxMult", "storageWantMult"].forEach(k => { if (!isNum(A[k], 1)) err("automation", `${k} must be a number >= 1`); });
         }
@@ -224,6 +277,7 @@
         buildings.forEach(b => Object.keys(b.cost || {}).forEach(k => used.add(k)));
         buildings.forEach(b => Object.keys(b.upkeep || {}).forEach(k => used.add(k)));
         tiers.forEach(t => Object.keys(t.needs || {}).forEach(k => used.add(k)));
+        policies.forEach(p => Object.keys(Object.assign({}, p.cost, p.upkeep)).forEach(k => used.add(k)));
         techs.forEach(q => Object.keys(q.cost || {}).forEach(k => used.add(k)));
         techs.forEach(q => { if (!(q.effects || []).length && !refT.has(q.id)) warn(`tech "${q.id}"`, "does nothing: no effects and nothing requires it"); });
         resources.forEach(r => { if (!used.has(r.id)) warn(`resource "${r.id}"`, "dead end: nothing consumes it (no job input, building cost, land cost or population need)"); });
