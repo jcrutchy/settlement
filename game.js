@@ -1,5 +1,5 @@
 "use strict";
-let G, S, RES = {}, DEP = {}, quiet = false, hCache = null, placing = null, selTile = null, popFloor = 0, armedBtn = null, armTimer = null, armedCtx = null, G0 = "", GP = null, autoNote = false, lastAuto = 0, ngVals = {};
+let G, S, RES = {}, DEP = {}, HL = false, WS = { owner: new Map() }, quiet = false, hCache = null, placing = null, selTile = null, popFloor = 0, armedBtn = null, armTimer = null, armedCtx = null, G0 = "", GP = null, autoNote = false, lastAuto = 0, ngVals = {};
 const KEY = "settlement_save_v2", CREDS = "settlement_gist_creds", FILE = "settlement_save.json";
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -28,10 +28,21 @@ function rng(seed) {
     return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 }
 
+// --- ACTIVE STATE ---
+// The engine reads and writes the globals S (the settlement being simulated) and hCache. withState runs fn with another settlement
+// swapped in (an AI neighbour), headless (no drawing), then puts everything back, so the player's selection and caches are untouched.
+const HC = new WeakMap(); // per-settlement hauling cache (kept out of the save)
+function withState(st, fn) {
+    if (S === st) return fn();
+    const keep = { S, hCache, selTile, placing, popFloor, quiet, HL, autoNote };
+    S = st; hCache = HC.get(st) || null; selTile = placing = null; HL = true; autoNote = false;
+    try { return fn(); } finally { HC.set(st, hCache); ({ S, hCache, selTile, placing, popFloor, quiet, HL, autoNote } = keep); }
+}
+
 // --- STATE ---
-function newState(seed, prev) {
+function newState(seed, prev, at) { // at: a start tile chosen by the caller (AI neighbours); the player's start comes from findStart()
     setWorld(seed);
-    const c = findStart(), own = {}, R = G.map.startRadius;
+    const c = at || findStart(), own = {}, R = G.map.startRadius;
     for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) own[K(c.x + dx, c.y + dy)] = { x: c.x + dx, y: c.y + dy, b: null };
     own[K(c.x, c.y)].b = "center";
     const s = { version: 4, seed, rev: prev ? prev.rev + 1 : 0, cloudRev: prev ? prev.cloudRev : 0, lastTick: Date.now(),
@@ -52,7 +63,8 @@ function ensure() { // fills in anything new in gamedata.json, and repairs NaN l
     S.gauge = S.gauge || {}; (G.gauges || []).forEach(g => { if (!Number.isFinite(S.gauge[g.id])) S.gauge[g.id] = g.start ?? 0.6; });
     S.pol = S.pol || {}; S.mods = S.mods || []; S.evCool = S.evCool || {}; S.time = S.time || 0;
     if (S.nextEvent === undefined) S.nextEvent = S.time + ((G.eventTiming || {}).grace || 600);
-    if (S.rng === undefined) S.rng = ((S.seed >>> 0) ^ 0x9e3779b9) >>> 0;
+    if (S.rng === undefined) S.rng = ((S.seed >>> 0) ^ 0x9e3779b9 ^ Math.imul(S.pid || 0, 0x85ebca6b)) >>> 0; // each settlement rolls its own events
+    if (!S.pid) { S.rivals = S.rivals || []; S.offers = S.offers || []; }
 }
 
 // startNew is defined with the new-game options below
@@ -160,18 +172,19 @@ function terrainAt(x, y) {
     if (t === undefined) { t = genTerrain(x, y, WSEED); if (TCACHE.size > 80000) TCACHE.clear(); TCACHE.set(k, t); }
     return t;
 }
-function findStart() { // nearest spot (spiralling out from 0,0) meeting the start rules; relaxes the later rules if needed
+function findStart(ox = 0, oy = 0, ok = null) { // nearest spot (spiralling out from ox,oy) meeting the start rules, and ok(x,y) if given; relaxes the later rules if needed
     const st = G.map.start, has = (x, y, ids, r, n) => { let c = 0; for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (ids.includes(terrainAt(x + dx, y + dy)) && ++c >= n) return true; return false; };
     for (let k = st.need.length; k >= 2; k--) {
         const needs = st.need.slice(0, k);
         for (let r = 0; r <= 60; r++) {
             const m = r * 3;
-            for (let i = -m; i <= m; i += 3) for (const [x, y] of r ? [[i, -m], [i, m], [-m, i], [m, i]] : [[0, 0]]) {
-                if (terrainAt(x, y) === st.center && needs.every(n => has(x, y, n.terrain, n.radius, n.count || 1))) return { x, y };
+            for (let i = -m; i <= m; i += 3) for (const [dx, dy] of r ? [[i, -m], [i, m], [-m, i], [m, i]] : [[0, 0]]) {
+                const x = ox + dx, y = oy + dy;
+                if (terrainAt(x, y) === st.center && (!ok || ok(x, y)) && needs.every(n => has(x, y, n.terrain, n.radius, n.count || 1))) return { x, y };
             }
         }
     }
-    return { x: 0, y: 0 };
+    return ok ? null : { x: 0, y: 0 };
 }
 const dterr = d => [].concat(d.terrain);
 const hk = (x, y) => hash(x, y, WSEED ^ 0x9999);
@@ -187,7 +200,7 @@ const allowed = (b, x, y) => { // terrain and "next to water"-style placement ru
     return !b.near || nb4.some(([dx, dy]) => b.near.includes(terrainAt(x + dx, y + dy)));
 };
 const canPlace = b => owned().some(t => !t.b && allowed(b, t.x, t.y));
-const claimable = (x, y) => !S.own[K(x, y)] && nb4.some(([dx, dy]) => S.own[K(x + dx, y + dy)]);
+const claimable = (x, y) => !S.own[K(x, y)] && !WS.owner.has(K(x, y)) && nb4.some(([dx, dy]) => S.own[K(x + dx, y + dy)]);
 function haul(id) { // delivery efficiency: mean distance from owned deposit tiles to the nearest depot
     if (!hCache) {
         hCache = {};
@@ -371,8 +384,8 @@ function advance() { // simulate real elapsed time since lastTick, in chunks
     const away = total > 10, st = away ? G.meta.offlineStepSec : G.meta.liveStepSec, p0 = S.pop;
     let left = total;
     quiet = away; popFloor = away ? Math.ceil(S.pop * 0.75) : 0; // away: at most a quarter can starve
-    while (left > 0) { const dt = Math.min(st, left); step(dt); left -= dt; }
-    if (away) S.nextEvent = Math.max(S.nextEvent, S.time + 60); // no event the moment you come back
+    while (left > 0) { const dt = Math.min(st, left); step(dt); if (!away) { stepRivals(dt, false); marketTick(false); } left -= dt; } // neighbours play in step with you...
+    if (away) { S.nextEvent = Math.max(S.nextEvent, S.time + 60); catchUpRivals(total); } // ...or catch up in coarse steps, for a limited time (see ai.awayMaxSec)
     quiet = false;
     if (away) log(`Welcome back. Simulated ${Math.round(total / 60)} min away; population ${S.pop >= p0 ? "+" : ""}${S.pop - p0}.`);
     return checkUnlocks();
@@ -458,7 +471,7 @@ function research(id) {
 function claimAt(x, y) { // pays for and claims one tile; returns whether it happened
     const c = claimCost(), k = K(x, y);
     if (S.own[k] || !claimable(x, y) || !afford(c)) return false;
-    spend(c); S.own[k] = { x, y, b: null }; S.claims++; S.rev++; hCache = null;
+    spend(c); S.own[k] = { x, y, b: null }; S.claims++; S.rev++; hCache = null; WS.owner.set(k, { pid: S.pid || 0, t: S.own[k] });
     const tid = terrainAt(x, y);
     G.deposits.filter(q => dterr(q).includes(tid)).forEach(d => { const cap = tileCap(d, x, y); S.dep[d.id].cap += cap; S.dep[d.id].amt += cap; });
     log(`Claimed a ${tid} tile.`); return true;
@@ -477,9 +490,10 @@ function log(msg, spam) {
     S.logs.length = Math.min(S.logs.length, 20);
     if (!quiet) renderLogs();
 }
-function renderLogs() { $("log-panel").innerHTML = S.logs.map(l => `<div class="log-entry">${esc(l)}</div>`).join(""); }
+function renderLogs() { if (HL) return; $("log-panel").innerHTML = S.logs.map(l => `<div class="log-entry">${esc(l)}</div>`).join(""); }
 
 function renderAll() {
+    if (HL) return;
     renderLogs(); renderMap();
     const rs = G.resources.filter(r => S.unlocked["res:" + r.id]);
     const badge = "font-size:0.65rem;padding:1px 4px;";
@@ -487,7 +501,7 @@ function renderAll() {
     $("manual-actions").innerHTML = rs.filter(r => r.manual).map(r => `<button onclick="gather('${r.id}')">+ Gather ${r.name}</button>`).join("");
     $("tiers-list").innerHTML = (G.pop.tiers || []).filter(t => S.unlocked["tier:" + t.id]).map(t => `<div class="row-item"><div class="row-info"><strong>${esc(((t.icon || "") + " " + t.name).trim())}</strong><span id="tier-info-${t.id}"></span></div><span class="badge" id="tier-val-${t.id}">0%</span></div>`).join("");
     $("gauges-list").innerHTML = (G.gauges || []).map(g => `<div class="row-item"><div class="row-info"><strong>${esc(((g.icon || "") + " " + g.name).trim())}</strong><span id="gauge-info-${g.id}"></span></div><span class="badge" id="gauge-val-${g.id}">0%</span></div>`).join("");
-    buildBar(); renderPolicies();
+    buildBar(); renderPolicies(); buildNeighbours();
     $("deposits-list").innerHTML = G.deposits.map(d => `<div class="row-item"><div class="row-info"><strong>${d.name}</strong><span id="dep-${d.id}"></span></div></div>`).join("");
     $("jobs-list").innerHTML = G.jobs.filter(j => S.unlocked["job:" + j.id]).map(j => `<div class="row-item"><div class="row-info"><strong>${j.name}</strong><span id="job-info-${j.id}"></span></div><div class="button-row" style="align-items:center;"><button onclick="adjustJob('${j.id}',-1)">-</button><span class="badge" id="job-val-${j.id}">0</span><button id="job-add-${j.id}" onclick="adjustJob('${j.id}',1)">+</button></div></div>`).join("");
     $("buildings-list").innerHTML = G.buildings.filter(b => S.unlocked["bld:" + b.id]).map(b => `<div class="row-item"><div class="row-info"><strong id="bld-name-${b.id}"></strong><span id="bld-desc-${b.id}"></span></div><button id="bld-btn-${b.id}" onclick="build('${b.id}')">Build</button></div>`).join("");
@@ -501,13 +515,14 @@ function renderAll() {
 }
 
 function renderMap() { // info line and buttons, then the canvas
+    if (HL) return;
     const cb = $("claim-tile-btn"), mb = $("move-btn"), db = $("demolish-btn"), mv = placing !== null;
     const xy = selTile ? selTile.split(",").map(Number) : null, t = selTile ? S.own[selTile] : null;
     const canEdit = !mv && t && t.b && t.b !== "center";
     let msg = mv ? `Tap one of your empty tiles to move ${bOf(S.own[placing].b).name} (costs ${costStr(moveCost(bOf(S.own[placing].b)))}).` : "Drag to pan, pinch or use +/- to zoom. Tap a tile to inspect it; claim tiles next to your land.";
     if (!mv && xy) {
         const tid = terrainAt(xy[0], xy[1]), ds = G.deposits.filter(q => dterr(q).includes(tid));
-        msg = `${tid} (${xy[0]}, ${xy[1]})${ds.map(d => ` · ${tileCap(d, xy[0], xy[1])} ${d.name.toLowerCase()}`).join("")} · ${t ? (t.b ? (t.b === "center" ? "town centre" : bOf(t.b).name) : "yours, empty") : claimable(xy[0], xy[1]) ? "next to your land" : "out of reach"}`;
+        msg = `${tid} (${xy[0]}, ${xy[1]})${ds.map(d => ` · ${tileCap(d, xy[0], xy[1])} ${d.name.toLowerCase()}`).join("")} · ${t ? (t.b ? (t.b === "center" ? "town centre" : bOf(t.b).name) : "yours, empty") : foreignAt(xy[0], xy[1]) ? "held by " + foreignAt(xy[0], xy[1]).name : claimable(xy[0], xy[1]) ? "next to your land" : "out of reach"}`;
     }
     $("tile-info").textContent = msg;
     cb.style.display = !mv && xy && !t && claimable(xy[0], xy[1]) ? "" : "none";
@@ -525,6 +540,7 @@ const WORLD = { // the read-only view of the game that renderers draw from
     terrainAt: (x, y) => terrainAt(x, y), terrain: id => TD[id], fallbackTerrain: () => G.map.terrain[G.map.terrain.length - 1].id,
     tile: (x, y) => S.own[K(x, y)] || null, key: K, claimable: (x, y) => claimable(x, y), allowed: (b, x, y) => allowed(b, x, y),
     building: id => bOf(id), centerIcon: () => G.map.centerIcon, selected: () => selTile, moving: () => placing !== null ? bOf(S.own[placing].b) : null,
+    foreign: (x, y) => foreignAt(x, y), // another settlement's tile: { name, color, icon, b } or null (renderers may ignore it)
     owned: () => owned(), isDepot: id => isDepot(id), deposits: () => G.deposits, depositsAt: (x, y) => G.deposits.filter(d => dterr(d).includes(terrainAt(x, y)))
 };
 const curRenderer = () => RENDERERS[SETTINGS.render.renderer];
@@ -701,6 +717,7 @@ function renderBar(R) {
 }
 
 function renderDynamic() {
+    if (HL) return;
     const { R, harvest, T, mood } = flows(1), set = (id, t) => { const e = $(id); if (e) e.textContent = t; };
     G.resources.forEach(r => {
         const x = R[r.id], net = x.p - x.c;
@@ -710,7 +727,7 @@ function renderDynamic() {
         const n = $("res-net-" + r.id);
         if (n) { const full = net > 0 && S.res[r.id] >= capOf(r.id) - 0.01; n.textContent = full ? "FULL, wasting" : "Net: " + (net > 0 ? "+" : "") + net.toFixed(1); n.className = "rate-badge " + (net > 0 ? "positive" : net < 0 ? "negative" : "neutral"); }
     });
-    renderBar(R); renderConds(); updatePolicies();
+    renderBar(R); renderConds(); updatePolicies(); updateNeighbours();
     G.deposits.forEach(d => {
         const s = S.dep[d.id], hl = haul(d.id), rate = harvest[d.id] || 0;
         const y = d.regrow ? `yield ${s.cap > 0 ? Math.round(100 * s.amt / s.cap) : 0}% (regrows)` : rate > 0 ? `lasts ${dur(s.amt / rate)} at this rate` : s.amt > 0 ? "finite, untouched" : "exhausted";
@@ -791,16 +808,21 @@ function startNew(seed, prev, vals) {
     opts.filter(o => o.kind === "rule").forEach(o => { const v = val(o); if (v !== optDefault(o)) rules[o.path] = v; });
     applyRules(rules);
     S = newState(seed, prev); S.rules = rules; S.auto = {};
-    hCache = placing = selTile = null; ensure();
+    hCache = placing = selTile = null; ensure(); rebuildWorld();
+    seedStart(opts, val, true);
+    recenter(); checkUnlocks(true);
+    const nr = opts.filter(o => o.kind === "rivals").reduce((a, o) => a + (+val(o) || 0), 0);
+    for (let i = 0; i < nr; i++) addRival();
+}
+function seedStart(opts, val, withAuto) { // applies the start options (settlers, buildings, stock) to the active settlement
     opts.forEach(o => {
         const v = val(o);
-        if (o.kind === "auto") S.auto[o.auto] = !!v;
+        if (o.kind === "auto") { if (withAuto) S.auto[o.auto] = !!v; }
         else if (o.kind === "settlers") S.pop = v;
         else if (o.kind === "building") for (let k = 0; k < v; k++) { const t = bestTile(o.building); if (!t) break; t.b = o.building; S.bld[o.building]++; }
     });
     hCache = null;
     opts.filter(o => o.kind === "resource").forEach(o => { S.res[o.resource] = Math.min(capOf(o.resource), val(o)); });
-    recenter(); checkUnlocks(true);
 }
 
 function openNewGame() {
@@ -1082,12 +1104,12 @@ function autoOrder() { // the player's order first, then any categories they hav
     const mine = (S.autoOrder || []).filter(k => AUTO_KEYS[k]), def = (G.automation && G.automation.order) || Object.keys(AUTO_KEYS);
     return [...mine, ...def.filter(k => !mine.includes(k))];
 }
-function runAuto() { // live ticks only. Assignment every tick; purchases at most one every 3 s, in priority order, each keeping what higher ones are saving for
+function runAuto(sim) { // live ticks only. Assignment every tick; purchases at most one every 3 s, in priority order, each keeping what higher ones are saving for.
+    // sim: an AI neighbour, paced by its own game clock instead (everything, assignment included, once per 3 s of game time), so it can also play on in coarse steps while you are away
+    if (sim) { if (S.time - (S.autoT ?? -99) < 3) return false; S.autoT = S.time; }
     const a = S.auto || {}; let acted = false;
     if (a.idle && getIdle() > 0 && autoAssign()) acted = true;
-    const now = Date.now();
-    if (now - lastAuto < 3000) return acted;
-    lastAuto = now;
+    if (!sim) { const now = Date.now(); if (now - lastAuto < 3000) return acted; lastAuto = now; }
     if (a.idle && autoTrim()) return true;
     const R = flows(1).R, reserve = {};
     for (const cat of autoOrder()) { if (a[AUTO_KEYS[cat]] && AUTO_STEPS[cat](R, reserve, a)) return true; }
@@ -1166,7 +1188,7 @@ async function pull() {
         const cloud = await gistGet(c);
         if (!cloud || cloud.version !== 4) throw new Error("No v0.4 save in the gist yet. Push one first.");
         if (S.rev > S.cloudRev && !confirm("This device has progress that hasn't been pushed. Replace it with the cloud save?")) return setStatus("Pull cancelled.");
-        S = cloud; S.cloudRev = S.rev; hCache = placing = selTile = null; applyRules(S.rules); ensure(); recenter(); advance(); saveLocal(); renderAll(); renderDisplayUI();
+        S = cloud; S.cloudRev = S.rev; hCache = placing = selTile = null; applyRules(S.rules); ensure(); loadWorld(); recenter(); advance(); saveLocal(); renderAll(); renderDisplayUI();
         setStatus("Loaded cloud save.");
     } catch (e) { setStatus("Pull failed: " + e.message, true); }
 }
@@ -1205,7 +1227,7 @@ async function init() {
     G0 = await (await fetchFresh("gamedata.json")).text(); GP = JSON.parse(G0); applyRules({});
     document.title = G.meta.title; $("game-h1").textContent = G.meta.title;
     S = loadLocal();
-    if (S) { applyRules(S.rules); ensure(); recenter(); } else startNew(randSeed());
+    if (S) { applyRules(S.rules); ensure(); loadWorld(); recenter(); } else startNew(randSeed());
     await loadSettings(); applyLayout(); window.addEventListener("resize", applyLayout); await useRenderer(); renderDisplayUI();
     loadCredsUI(); syncUI(); bindEvents();
     advance(); checkUnlocks(); renderAll();

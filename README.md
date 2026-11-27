@@ -38,6 +38,7 @@ The token and gist ID are stored only in that browser's local storage. Each save
 | --- | --- |
 | `index.html`, `ui.html`, `style.css` | Loader shell, game markup and styling |
 | `game.js` | Engine: simulation, rules, UI, saving, sync |
+| `world.js` | Shared map ownership, AI neighbours and trade (loaded after `game.js`, same global scope) |
 | `gamedata.json` | All content: resources, jobs, buildings, deposits, land, population rules |
 | `validate.js`, `validate.html` | Data checker (see below) |
 | `builder.html`, `builder.js` | Form-based editor for `gamedata.json` with live validation; exports the file for you to commit |
@@ -49,6 +50,16 @@ The token and gist ID are stored only in that browser's local storage. Each save
 **New Game…** (footer) opens a panel with presets (Standard, Relaxed, Hard) and every option listed under `newGame` in `gamedata.json`: starting settlers, starting buildings and resources, starting land radius, and rule tweaks such as food eaten per settler, arrival and starvation speed, claim prices, spoilage and hauling loss. Rule options override a number in the game data by dotted path (for example `resources.food.spoil`), and the overrides are saved with the run. To expose another number, add an option with `"kind": "rule"` and its path; the checker verifies that the path exists.
 
 **Automation** (header button) is for casual play and works while the game is open. It can assign idle settlers, keep food supplied, build storehouses and depots, research technologies, build the buildings a production chain needs (a kiln for bricks, a library for knowledge), build housing, and claim land. The panel lists those purchase categories in priority order, with a checkbox and up/down arrows for each: higher ones go first, and a purchase being saved up for is never spent on something lower down. **Resource focus** (Low, Normal, High) steers which jobs idle settlers prefer. Automation keeps a spending reserve, releases workers from exhausted or over-staffed deposits, and stops buying land once it costs more than `automation.claimMaxMult` times the starting price. It doesn't run while the game is closed.
+
+## Neighbours and trade
+
+The **Neighbours** panel adds AI settlements to your map (or set **AI neighbours** in New Game…, or use the *With neighbours* preset). Each neighbour is an ordinary settlement with every automation switched on, and a personality (a purchase order and resource focus, see `ai` in `gamedata.json`). They start `ai.spacing` tiles away, claim land first come, first served (a tile held by anyone is closed to everyone else), and are drawn in their own colour. 📍 pans the map to one.
+
+Neighbours play on the same clock as you. When you were away they catch up in coarse steps (`ai.awayStepSec`) for at most `ai.awayMaxSec` of it, which keeps coming back quick and means a night's sleep doesn't cost you the whole frontier.
+
+**Trade** needs a Market (unlocked by Bartering). Every resource has a `value`; a settlement prices it higher when its stockpile is low and lower when it is full (`trade.scarce`, `trade.glut`), with a `trade.spread` either way, so a round trip always loses a little. Neighbours keep a reserve (`trade.keep`, plus what their settlers eat) and won't sell below it. They also trade with each other, and now and then send you an offer to accept or decline. Resources flagged `"tradable": false` (knowledge) stay home.
+
+Saves carry the neighbours' states, so they sync through the gist with everything else. Old saves load with no neighbours.
 
 ## Display and graphics
 
@@ -80,7 +91,7 @@ php -S localhost:8000
 
 (Any static file server works.) The whole project is plain HTML, CSS and JavaScript, hosted as-is on GitHub Pages.
 
-`index.html` is a tiny loader that fetches `style.css`, `ui.html` (the game markup) and `game.js` with revalidation, so a new version reaches players on their next page load with no cache busting or force-refresh. When offline it falls back to the cached copies.
+`index.html` is a tiny loader that fetches `style.css`, `ui.html` (the game markup), `game.js` and `world.js` with revalidation, so a new version reaches players on their next page load with no cache busting or force-refresh. When offline it falls back to the cached copies.
 
 ## License
 

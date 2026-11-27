@@ -27,6 +27,11 @@
                     if (opts.icons && z >= 30) { c.font = Math.floor(z * 0.3) + "px sans-serif"; c.fillText(td.icon, px + z * 0.2, py + z * 0.2); }
                 } else if (opts.icons && tid !== plain) { c.font = Math.floor(z * 0.5) + "px sans-serif"; c.globalAlpha = o ? 1 : 0.8; c.fillText(td.icon, px + z / 2, py + z / 2 + 1); c.globalAlpha = 1; }
             }
+            const f = !o && world.foreign ? world.foreign(x, y) : null; // another settlement's tile: tint, outline and building
+            if (f) {
+                c.globalAlpha = 0.32; c.fillStyle = f.color; c.fillRect(px, py, z + 0.5, z + 0.5); c.globalAlpha = 0.9; c.strokeStyle = f.color; c.lineWidth = 1; c.strokeRect(px + 0.5, py + 0.5, z - 1, z - 1); c.globalAlpha = 1;
+                if (f.b && z >= 20) { c.font = Math.floor(z * 0.62) + "px sans-serif"; c.fillText(f.b === "center" ? f.icon : world.building(f.b).icon || "🏗️", px + z / 2, py + z / 2 + 1); }
+            }
             if (!o && world.claimable(x, y)) { c.setLineDash([3, 3]); c.strokeStyle = "#d97706"; c.lineWidth = 1.5; c.strokeRect(px + 1, py + 1, z - 2, z - 2); c.setLineDash([]); }
             if (moving && o && !o.b && world.allowed(moving, x, y)) { c.strokeStyle = "#34d399"; c.lineWidth = 2; c.strokeRect(px + 1, py + 1, z - 2, z - 2); }
             if (sel === world.key(x, y)) { c.strokeStyle = "#e2e8f0"; c.lineWidth = 2; c.strokeRect(px + 1, py + 1, z - 2, z - 2); }

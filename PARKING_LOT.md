@@ -10,4 +10,6 @@ Ideas that are good but not scheduled. Add them here instead of building them mi
 - **Stats on other devices:** sync the history (or a summary) through the gist so a phone can show charts from the desktop run.
 - **More towns:** a second Town Centre as a late-game tech and building (costs settlers and materials). It would be a depot and housing hub, which fits the hauling system: far deposits become efficient once you have a town next to them.
 - **Luxuries and happiness:** optional resources villagers consume for faster growth or bonuses, tied to trade.
-- **Rival AI settlement:** competing for the same map tiles and deposits.
+- **Neighbours, next steps:** war and borders (raiding, defence, tile capture), alliances, AI-to-AI relations, removing a neighbour, picking a personality when adding one, a difficulty setting (AI handicap), a "neighbour news" feed.
+- **Online players:** a small PHP + SQLite service that arbitrates only shared things (atomic tile claims, public player summaries, trade escrow) while each client keeps simulating its own settlement. The `WS.owner` index and `withState` are the seams for it. The gist can't do atomic claims.
+- **Trade, next steps:** trade routes limited by distance or roads, caravans as real workers, prices that drift with the whole map's supply.

@@ -9,7 +9,7 @@
 <body>
     <div id="app">Loading...</div>
     <script>
-        // Tiny loader: always revalidates style.css, ui.html and game.js (a cheap 304 when unchanged),
+        // Tiny loader: always revalidates style.css, ui.html, game.js and world.js (a cheap 304 when unchanged),
         // so new versions arrive on the next page load with no manual refresh. Falls back to the
         // cached copies when offline.
         (async () => {
@@ -21,10 +21,11 @@
             };
             const app = document.getElementById("app");
             try {
-                const [css, ui, js] = await Promise.all(["style.css", "ui.html", "game.js"].map(get));
+                const [css, ui, js, wjs] = await Promise.all(["style.css", "ui.html", "game.js", "world.js"].map(get));
                 const st = document.createElement("style"); st.textContent = css; document.head.append(st);
                 app.innerHTML = ui;
-                const sc = document.createElement("script"); sc.textContent = js + "\n//# sourceURL=game.js"; document.body.append(sc);
+                // both scripts share one global scope: game.js is the engine, world.js adds AI neighbours and trade (its functions are only called after init's first fetch)
+                [[js, "game.js"], [wjs, "world.js"]].forEach(([code, name]) => { const sc = document.createElement("script"); sc.textContent = code + "\n//# sourceURL=" + name; document.body.append(sc); });
             } catch (e) { app.textContent = "Could not load the game: " + e.message; }
         })();
     </script>

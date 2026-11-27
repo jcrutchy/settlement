@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id), DRAFT = "settlement_builder_draft";
 const SING = { resources: "resource", jobs: "job", buildings: "building", deposits: "deposit", techs: "tech" };
 // field: [key, type, optional?, referenced list]
 const FIELDS = {
-    resources: [["id", "id"], ["name", "text"], ["icon", "text"], ["cap", "num"], ["initial", "num", 1], ["spoil", "num", 1], ["manual", "bool", 1], ["manualDeposit", "ref", 1, "deposits"], ["requires", "cond", 1]],
+    resources: [["id", "id"], ["name", "text"], ["icon", "text"], ["cap", "num"], ["initial", "num", 1], ["spoil", "num", 1], ["value", "num", 1], ["manual", "bool", 1], ["manualDeposit", "ref", 1, "deposits"], ["requires", "cond", 1]],
     jobs: [["id", "id"], ["name", "text"], ["outputs", "map", 0, "resources"], ["inputs", "map", 1, "resources"], ["deposit", "ref", 1, "deposits"], ["slots", "slots", 1], ["requires", "cond", 1]],
     buildings: [["id", "id"], ["name", "text"], ["icon", "text"], ["desc", "text", 1], ["cost", "map", 0, "resources"], ["uses", "num"], ["growth", "growth", 1], ["terrain", "csv", 1], ["near", "csv", 1], ["effects", "effects"], ["requires", "cond", 1]],
     techs: [["id", "id"], ["name", "text"], ["desc", "text", 1], ["cost", "map", 0, "resources"], ["requires", "cond", 1], ["effects", "effects"]],

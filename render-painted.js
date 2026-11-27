@@ -13,8 +13,8 @@
 
     function draw({ ctx: c, W, H, cam, zoom: z, world, opts }) {
         const x0 = Math.floor(cam.x - W / 2 / z) - 1, x1 = Math.ceil(cam.x + W / 2 / z) + 1, y0 = Math.floor(cam.y - H / 2 / z) - 1, y1 = Math.ceil(cam.y + H / 2 / z) + 1;
-        const w = x1 - x0 + 1, h = y1 - y0 + 1, T = new Array(w * h), O = new Array(w * h), TD = {};
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = (y - y0) * w + (x - x0); T[i] = world.terrainAt(x, y); O[i] = world.tile(x, y); if (!TD[T[i]]) TD[T[i]] = world.terrain(T[i]); }
+        const w = x1 - x0 + 1, h = y1 - y0 + 1, T = new Array(w * h), O = new Array(w * h), F = new Array(w * h), TD = {}; // F: tiles held by another settlement
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = (y - y0) * w + (x - x0); T[i] = world.terrainAt(x, y); O[i] = world.tile(x, y); F[i] = O[i] || !world.foreign ? null : world.foreign(x, y); if (!TD[T[i]]) TD[T[i]] = world.terrain(T[i]); }
         const inR = (x, y) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
         const tid = (x, y) => { if (inR(x, y)) return T[(y - y0) * w + (x - x0)]; const t = world.terrainAt(x, y); if (!TD[t]) TD[t] = world.terrain(t); return t; };
         const own = (x, y) => !!(inR(x, y) ? O[(y - y0) * w + (x - x0)] : world.tile(x, y));
@@ -28,7 +28,7 @@
 
         // 1) ground: shaded colour per tile, soft patches, clay banks, fields
         for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-            const t = tid(x, y), td = TD[t], px = PX(x), py = PY(y), o = O[(y - y0) * w + (x - x0)];
+            const t = tid(x, y), td = TD[t], px = PX(x), py = PY(y), o = O[(y - y0) * w + (x - x0)] || F[(y - y0) * w + (x - x0)];
             c.fillStyle = shade(td.color, opts.texture ? 0.94 + hash(x, y, 1) * 0.12 : 1); c.fillRect(px, py, z + 0.6, z + 0.6);
             if (td.water) continue;
             if (opts.texture && z >= 14 && hash(x, y, 2) < 0.55) ell(px + z * (0.2 + 0.6 * hash(x, y, 3)), py + z * (0.2 + 0.6 * hash(x, y, 4)), z * 0.3, z * 0.2, hash(x, y, 5) < 0.5 ? "rgba(255,255,255,.05)" : "rgba(0,0,0,.07)");
@@ -89,7 +89,7 @@
             c.fillStyle = "#4a3426"; c.fillRect(cx - s * 0.07, by - s * 0.22, s * 0.14, s * 0.22);
         };
         for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-            const t = tid(x, y), px = PX(x), py = PY(y), o = O[(y - y0) * w + (x - x0)];
+            const t = tid(x, y), px = PX(x), py = PY(y), o = O[(y - y0) * w + (x - x0)] || F[(y - y0) * w + (x - x0)];
             if (o && o.b && !FIELD[o.b]) { const id = o.b, s = z * 0.82, cx = px + z * 0.5, by = py + z * 0.88; objs.push([by, () => { if (detail && z >= 14) building(cx, by, s, id); else { c.fillStyle = id === "center" ? "#efe6cf" : roofOf(id); c.fillRect(px + z * 0.2, py + z * 0.2, z * 0.6, z * 0.6); } }]); }
             if (!detail || !opts.scenery) continue;
             const free = !(o && o.b);
@@ -104,7 +104,17 @@
 
         // 4) territory: dim what you don't own, glow along the border of what you do
         c.fillStyle = "rgba(8,12,20,.36)";
-        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (!O[(y - y0) * w + (x - x0)]) c.fillRect(PX(x), PY(y), z + 0.6, z + 0.6);
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (!O[(y - y0) * w + (x - x0)] && !F[(y - y0) * w + (x - x0)]) c.fillRect(PX(x), PY(y), z + 0.6, z + 0.6);
+        // neighbours: a wash of their colour, and a border where their land ends
+        const fp = (x, y) => { const f = inR(x, y) ? F[(y - y0) * w + (x - x0)] : (world.foreign ? world.foreign(x, y) : null); return f ? f.pid : 0; };
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+            const f = F[(y - y0) * w + (x - x0)]; if (!f) continue; const px = PX(x), py = PY(y);
+            c.fillStyle = `rgba(${rgb(f.color).join(",")},.24)`; c.fillRect(px, py, z + 0.6, z + 0.6);
+            c.beginPath();
+            if (fp(x, y - 1) !== f.pid) { c.moveTo(px, py); c.lineTo(px + z, py); } if (fp(x, y + 1) !== f.pid) { c.moveTo(px, py + z); c.lineTo(px + z, py + z); }
+            if (fp(x - 1, y) !== f.pid) { c.moveTo(px, py); c.lineTo(px, py + z); } if (fp(x + 1, y) !== f.pid) { c.moveTo(px + z, py); c.lineTo(px + z, py + z); }
+            c.strokeStyle = f.color; c.lineWidth = 2; c.stroke();
+        }
         if (opts.territory) {
             c.beginPath();
             for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {

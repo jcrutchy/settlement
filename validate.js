@@ -53,6 +53,9 @@
             if (r.initial !== undefined && !isNum(r.initial)) err(w, "initial must be a number");
             if (r.manualDeposit !== undefined && !ids.deposits.has(r.manualDeposit)) err(w, `manualDeposit "${r.manualDeposit}" is not a deposit`);
             if (r.spoil !== undefined && (!isNum(r.spoil) || r.spoil >= 1)) err(w, "spoil must be a number from 0 to 1 (fraction lost per second)");
+            if (r.value !== undefined && !isNum(r.value, 1e-12)) err(w, "value (trade price) must be a number > 0");
+            if (r.tradable !== undefined && typeof r.tradable !== "boolean") err(w, "tradable must be true or false");
+            if (G.trade !== undefined && r.value === undefined && r.tradable !== false) warn(w, "has no trade value, so it trades at 1; add a value or set tradable to false");
             walk(r.requires, w);
         });
 
@@ -237,6 +240,30 @@
             if (!Array.isArray(A.order) || A.order.some(c => !cats.includes(c))) err("automation", `order must list categories from: ${cats.join(", ")}`);
             ["claimMaxMult", "storageWantMult"].forEach(k => { if (!isNum(A[k], 1)) err("automation", `${k} must be a number >= 1`); });
         }
+        // trade and AI neighbours (world.js)
+        if (G.trade !== undefined) {
+            const T = G.trade;
+            if (!isNum(T.spread) || T.spread >= 1) err("trade", "spread must be a number from 0 to 1");
+            ["scarce", "glut"].forEach(k => { if (!isNum(T[k], 1e-12)) err("trade", `${k} must be a number > 0 (price multiplier at an empty / full stockpile)`); });
+            if (isNum(T.scarce) && isNum(T.glut) && T.glut > T.scarce) warn("trade", "glut is higher than scarce, so a full stockpile would be dearer than an empty one");
+            if (!isNum(T.keep) || T.keep > 1) err("trade", "keep must be a number from 0 to 1 (share of capacity a settlement will not sell below)");
+            if (!isNum(T.reserveSec)) err("trade", "reserveSec must be a number >= 0");
+            if (!ids.buildings.has("market")) warn("trade", "no building with id \"market\": AI neighbours build one as soon as it is unlocked, and you need one to trade");
+        }
+        if (G.ai !== undefined) {
+            const A = G.ai, cats = ["food", "storage", "research", "production", "housing", "welfare", "policy", "land"];
+            ["spacing", "max", "awayStepSec", "awayMaxSec", "tradeEverySec", "offerEverySec", "offerTtl"].forEach(k => { if (A[k] !== undefined && !isNum(A[k], 1)) err("ai", `${k} must be a number >= 1`); });
+            if (A.names !== undefined && (!Array.isArray(A.names) || !A.names.length || A.names.some(n => typeof n !== "string"))) err("ai", "names must be a non-empty list of strings");
+            const ngIds = new Set(((G.newGame || {}).options || []).map(o => o.id));
+            for (const k in A.start || {}) if (!ngIds.has(k)) err("ai", `start sets unknown new-game option "${k}"`); // the AI starts from the same options a new game has (settlers, huts, stock...)
+            if (!Array.isArray(A.personalities) || !A.personalities.length) err("ai", "personalities must be a non-empty array");
+            else A.personalities.forEach(p => {
+                const w = `ai personality "${p.id}"`;
+                if (!p.id || !p.name) err(w, "needs an id and a name");
+                if (p.order !== undefined && (!Array.isArray(p.order) || p.order.some(c => !cats.includes(c)))) err(w, `order must list categories from: ${cats.join(", ")}`);
+                for (const k in p.focus || {}) { if (!hasRes(k)) err(w, `focus references unknown resource "${k}"`); else if (![0, 1, 2].includes(p.focus[k])) err(w, `focus "${k}" must be 0 (low), 1 (normal) or 2 (high)`); }
+            });
+        }
         // new-game options: every rule path must point at a real number in this file
         if (G.newGame !== undefined) {
             const getP = (o, p) => { let cur = o; for (const s of p.split(".")) { cur = Array.isArray(cur) ? cur.find(x => x.id === s) : cur && cur[s]; if (cur === undefined || cur === null) return undefined; } return cur; };
@@ -244,7 +271,7 @@
             (G.newGame.options || []).forEach(o => {
                 const w = `newGame option "${o.id}"`;
                 if (!o.id || oid.has(o.id)) err(w, "missing or duplicate id"); oid.add(o.id);
-                if (!["settlers", "building", "resource", "rule", "auto"].includes(o.kind)) err(w, "kind must be settlers, building, resource, rule or auto");
+                if (!["settlers", "building", "resource", "rule", "auto", "rivals"].includes(o.kind)) err(w, "kind must be settlers, building, resource, rule, auto or rivals");
                 if (o.kind === "building" && !ids.buildings.has(o.building)) err(w, `unknown building "${o.building}"`);
                 if (o.kind === "resource" && !hasRes(o.resource)) err(w, `unknown resource "${o.resource}"`);
                 if (o.kind === "rule" && typeof getP(G, o.path) !== "number") err(w, `path "${o.path}" does not point at a number in this file`);
