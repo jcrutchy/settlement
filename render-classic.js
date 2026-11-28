@@ -11,7 +11,7 @@
         { id: "icons", label: "Terrain icons", type: "bool", default: true },
         { id: "outlines", label: "Outline owned tiles", type: "bool", default: true }
     ],
-    // v = { ctx, W, H, cam, zoom, time, world, opts }; world is the game's read-only view of the map (see game.js, WORLD)
+    // v = { ctx, W, H, cam, zoom, time, world, opts }; world is the game's read-only view of the map (see ui.js, WORLD)
     draw({ ctx: c, W, H, cam, zoom: z, world, opts }) {
         c.fillStyle = "#0b0d10"; c.fillRect(0, 0, W, H);
         const x0 = Math.floor(cam.x - W / 2 / z), x1 = Math.ceil(cam.x + W / 2 / z), y0 = Math.floor(cam.y - H / 2 / z), y1 = Math.ceil(cam.y + H / 2 / z);

@@ -1,0 +1,4 @@
+{
+    "core": ["kernel.js", "rules.js", "map.js", "sim.js", "actions.js", "automation.js", "world.js", "ui.js", "save.js", "main.js"],
+    "mods": []
+}

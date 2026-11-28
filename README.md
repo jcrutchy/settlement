@@ -37,8 +37,12 @@ The token and gist ID are stored only in that browser's local storage. Each save
 | File | Purpose |
 | --- | --- |
 | `index.html`, `ui.html`, `style.css` | Loader shell, game markup and styling |
-| `game.js` | Engine: simulation, rules, UI, saving, sync |
-| `world.js` | Shared map ownership, AI neighbours and trade (loaded after `game.js`, same global scope) |
+| `modules.json` | The scripts to load, in order: the core modules, then any mods (see *Modules and mods*) |
+| `kernel.js`, `rules.js`, `map.js`, `sim.js`, `actions.js` | The engine: rules and costs, the map and tile ownership, state and simulation, player actions. No page code at all |
+| `automation.js`, `world.js` | The automation planners, and AI neighbours with trade |
+| `ui.js`, `save.js`, `main.js` | Everything that touches the page, saving and gist sync, startup |
+| `mods/` | Optional extra scripts (one example) |
+| `tests/` | Optional layered tests (Node, no dependencies): `node tests/run.js` |
 | `gamedata.json` | All content: resources, jobs, buildings, deposits, land, population rules |
 | `validate.js`, `validate.html` | Data checker (see below) |
 | `builder.html`, `builder.js` | Form-based editor for `gamedata.json` with live validation; exports the file for you to commit |
@@ -91,7 +95,18 @@ php -S localhost:8000
 
 (Any static file server works.) The whole project is plain HTML, CSS and JavaScript, hosted as-is on GitHub Pages.
 
-`index.html` is a tiny loader that fetches `style.css`, `ui.html` (the game markup), `game.js` and `world.js` with revalidation, so a new version reaches players on their next page load with no cache busting or force-refresh. When offline it falls back to the cached copies.
+`index.html` is a tiny loader that fetches `style.css`, `ui.html` (the game markup), `modules.json` and every script it lists, with revalidation, so a new version reaches players on their next page load with no cache busting or force-refresh. When offline it falls back to the cached copies.
+
+## Modules and mods
+
+The scripts are plain classic scripts loaded in the order of `modules.json`; they share one global scope, so there is no import machinery and no build step.
+
+- **The engine takes the settlement as its first argument.** `step(S, dt)`, `build(S, id)`, `capOf(S, k)`, `runAuto(S)`: every function that reads or changes a settlement is passed one, named `S`, so any number of settlements can exist at once (yours, AI neighbours, a test fixture). The page layer (`ui.js`, `save.js`, `main.js`) keeps the player's settlement in a global `S` and passes it in.
+- **The engine never touches the page.** `kernel.js`, `rules.js`, `map.js`, `sim.js`, `actions.js` (and `automation.js`, `world.js`) use no DOM, storage, timers or UI state, so they run in any JavaScript host. Anything that has to reach the screen goes through events: `Settlement.emit("changed", S)` after a structural change, `"dirty"` after a numbers-only change, `"log"`, `"built"`, and so on. The full list is at the top of `kernel.js`. The UI subscribes; a neighbour's settlement emits the same events and the UI simply ignores everyone but the player.
+- **Per-settlement scratch** that is never saved (the hauling cache, whether this step should log, the starvation floor during catch-up) lives in `RUN(S)`, a `WeakMap` entry, not in the state or in globals.
+- **Time is passed in.** `advance(S, now)` takes the clock as an argument (default `Date.now()`), which is what makes a run reproducible.
+
+**A mod** is one script listed under `"mods"` in `modules.json` (see `mods/milestones.js`). It loads after the core modules, can call any engine function, and subscribes with `Settlement.on(event, fn)` (for example `"tick"` to add a mechanic, `"newgame"` to set up extra state, `"built"` to react to a building). It can also keep its own fields on the state, which are saved and synced with the rest. A mod that fails to load is skipped; a listener that throws is logged and skipped. New content (resources, buildings, techs, events) doesn't need a mod at all: it is just `gamedata.json`.
 
 ## License
 

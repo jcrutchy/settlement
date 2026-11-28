@@ -9,7 +9,7 @@
 <body>
     <div id="app">Loading...</div>
     <script>
-        // Tiny loader: always revalidates style.css, ui.html, game.js and world.js (a cheap 304 when unchanged),
+        // Tiny loader: always revalidates style.css, ui.html, modules.json and every script it lists (a cheap 304 when unchanged),
         // so new versions arrive on the next page load with no manual refresh. Falls back to the
         // cached copies when offline.
         (async () => {
@@ -21,11 +21,14 @@
             };
             const app = document.getElementById("app");
             try {
-                const [css, ui, js, wjs] = await Promise.all(["style.css", "ui.html", "game.js", "world.js"].map(get));
+                const [css, ui, manifest] = await Promise.all(["style.css", "ui.html", "modules.json"].map(get));
+                const M = JSON.parse(manifest), core = M.core || [], mods = M.mods || [];
+                const code = await Promise.all([...core.map(get), ...mods.map(u => get(u).catch(e => { console.warn("mod not loaded: " + u + " (" + e.message + ")"); return null; }))]);
                 const st = document.createElement("style"); st.textContent = css; document.head.append(st);
                 app.innerHTML = ui;
-                // both scripts share one global scope: game.js is the engine, world.js adds AI neighbours and trade (its functions are only called after init's first fetch)
-                [[js, "game.js"], [wjs, "world.js"]].forEach(([code, name]) => { const sc = document.createElement("script"); sc.textContent = code + "\n//# sourceURL=" + name; document.body.append(sc); });
+                // classic scripts in manifest order, sharing one global scope: core modules first, then mods (a mod that fails to load is skipped)
+                [...core, ...mods].forEach((name, i) => { if (code[i] === null) return; const sc = document.createElement("script"); sc.textContent = code[i] + "\n//# sourceURL=" + name; document.body.append(sc); });
+                await Settlement.start();
             } catch (e) { app.textContent = "Could not load the game: " + e.message; }
         })();
     </script>
